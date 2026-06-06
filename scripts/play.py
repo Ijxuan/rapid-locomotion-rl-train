@@ -109,7 +109,7 @@ def play_mc(headless=True):
     env, policy = load_env(headless=headless)
 
     num_eval_steps = 250
-    x_vel_cmd, y_vel_cmd, yaw_vel_cmd = 3.0, 0.0, 0.0
+    x_vel_cmd, y_vel_cmd, yaw_vel_cmd = 0.0, 0.0, 0.0
 
     measured_x_vels = np.zeros(num_eval_steps)
     target_x_vels = np.ones(num_eval_steps) * x_vel_cmd

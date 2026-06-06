@@ -119,6 +119,7 @@ class RapidRLPolicyNode:
         self.last_log_time_s = self.start_time_s
         self.last_state_time_s: float | None = None
         self.last_state_sequence: int | None = None
+        self.last_state_latency_ms: float | None = None
         self.last_inference_time_ms: float | None = None
         self.last_command = np.zeros(3, dtype=np.float32)
 
@@ -151,6 +152,7 @@ class RapidRLPolicyNode:
         msg = self.rl_robot_state_lcmt.decode(data)
         self.received_count += 1
         self.last_state_time_s = time.monotonic()
+        self.last_state_latency_ms = max(0.0, (monotonic_us() - int(msg.timestamp_us)) / 1000.0)
         self.last_state_sequence = int(msg.sequence)
         self.last_command = np.asarray(msg.command, dtype=np.float32)
         obs = build_observation(
@@ -209,13 +211,14 @@ class RapidRLPolicyNode:
             return
 
         age_ms = (now - self.last_state_time_s) * 1000.0
+        latency = -1.0 if self.last_state_latency_ms is None else self.last_state_latency_ms
         inference = -1.0 if self.last_inference_time_ms is None else self.last_inference_time_ms
         command = ", ".join(f"{x:.2f}" for x in self.last_command)
         action_norm = float(np.linalg.norm(self.last_action))
         print(
             f"[rl_lcm_policy] 状态: 运行 {uptime_s:.1f}s, 已收 {self.received_count} 条状态, "
             f"已发 {self.published_count} 条策略, 最近 state_seq={self.last_state_sequence}, "
-            f"距上次状态 {age_ms:.0f}ms, 推理 {inference:.3f}ms, "
+            f"距上次状态 {age_ms:.0f}ms, 链路 {latency:.3f}ms, 推理 {inference:.3f}ms, "
             f"cmd=[{command}], action_norm={action_norm:.3f}",
             flush=True,
         )
