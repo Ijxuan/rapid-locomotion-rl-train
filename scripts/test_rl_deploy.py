@@ -6,8 +6,10 @@ import numpy as np
 
 from mini_gym.deploy.rapid_locomotion_policy import (
     ACTION_DIM,
+    ACTION_SCALE,
     COMMAND_SCALE,
     DEFAULT_Q_POLICY,
+    HIP_SCALE_REDUCTION,
     OBS_DIM,
     ObservationHistory,
     action_to_target_q,
@@ -26,8 +28,10 @@ class RapidLocomotionDeployTest(unittest.TestCase):
     def test_hip_action_uses_reduced_scale(self):
         action = np.ones(ACTION_DIM, dtype=np.float32)
         target = action_to_target_q(action)
-        expected = DEFAULT_Q_POLICY + 0.25
-        expected[[0, 3, 6, 9]] = DEFAULT_Q_POLICY[[0, 3, 6, 9]] + 0.125
+        expected = DEFAULT_Q_POLICY + ACTION_SCALE
+        expected[[0, 3, 6, 9]] = (
+            DEFAULT_Q_POLICY[[0, 3, 6, 9]] + ACTION_SCALE * HIP_SCALE_REDUCTION
+        )
         np.testing.assert_allclose(target, expected)
 
     def test_observation_layout_and_scales(self):
