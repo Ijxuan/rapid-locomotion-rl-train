@@ -17,7 +17,11 @@ ACTION_DIM = 12
 
 POLICY_DT = 0.02
 ACTION_SCALE = 0.25
-HIP_SCALE_REDUCTION = 0.5
+
+# 髋关节横摆关节(abad/hip, 每条腿第 0 个关节)的动作缩放系数。
+# 训练环境只把这些关节的 action delta 再乘一次该系数，thigh/calf 不受影响。
+HIP_SCALE_REDUCTION = 0.4
+
 KP = 20.0
 KD = 0.5
 
@@ -52,6 +56,7 @@ DEFAULT_Q_POLICY = np.array(
 # corresponding robot-order index.
 POLICY_TO_ROBOT = np.array([3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8], dtype=np.int64)
 ROBOT_TO_POLICY = POLICY_TO_ROBOT.copy()
+# policy 顺序中的 abad/hip 横摆关节索引: FL_hip, FR_hip, RL_hip, RR_hip。
 HIP_INDICES = np.array([0, 3, 6, 9], dtype=np.int64)
 
 
@@ -78,6 +83,7 @@ def policy_to_robot_order(values: Iterable[float]) -> np.ndarray:
 def action_to_target_q(action: Iterable[float]) -> np.ndarray:
     action = _array(action, ACTION_DIM, "action")
     scaled = action * ACTION_SCALE
+    # 只缩小四个 abad/hip 横摆关节的目标角增量，避免髋关节左右摆幅过大。
     scaled[HIP_INDICES] *= HIP_SCALE_REDUCTION
     return DEFAULT_Q_POLICY + scaled
 
