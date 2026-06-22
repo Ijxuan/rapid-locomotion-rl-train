@@ -16,6 +16,29 @@ from mini_gym.utils.terrain import Terrain
 from .legged_robot_config import Cfg
 
 
+def torch_rand_float(lower, upper, shape, device):
+    return (upper - lower) * torch.rand(*shape, device=device) + lower
+
+
+def quat_apply(a, b):
+    shape = b.shape
+    a = a.reshape(-1, 4)
+    b = b.reshape(-1, 3)
+    xyz = a[:, :3]
+    t = xyz.cross(b, dim=-1) * 2
+    return (b + a[:, 3:] * t + xyz.cross(t, dim=-1)).view(shape)
+
+
+def quat_rotate_inverse(q, v):
+    shape = q.shape
+    q_w = q[:, -1]
+    q_vec = q[:, :3]
+    a = v * (2.0 * q_w ** 2 - 1.0).unsqueeze(-1)
+    b = torch.cross(q_vec, v, dim=-1) * q_w.unsqueeze(-1) * 2.0
+    c = q_vec * torch.bmm(q_vec.view(shape[0], 1, 3), v.view(shape[0], 3, 1)).squeeze(-1) * 2.0
+    return a - b + c
+
+
 class LeggedRobot(BaseTask):
     def __init__(self, cfg: Cfg, sim_params, physics_engine, sim_device, headless, eval_cfg=None,
                  initial_dynamics_dict=None):
@@ -257,9 +280,10 @@ class LeggedRobot(BaseTask):
         if self.cfg.terrain.curriculum:
             self.extras["train/episode"]["terrain_level"] = torch.mean(
                 self.terrain_levels[:self.num_train_envs].float())
-        if self.cfg.commands.command_curriculum:
+        if hasattr(self, "env_command_bins"):
             self.extras["env_bins"] = torch.Tensor(self.env_command_bins)[:self.num_train_envs]
-            self.extras["train/episode"]["command_area"] = np.sum(self.curriculum.weights) / self.curriculum.weights.shape[0]
+            if "train/episode" in self.extras:
+                self.extras["train/episode"]["command_area"] = np.sum(self.curriculum.weights) / self.curriculum.weights.shape[0]
         if self.cfg.commands.yaw_command_curriculum:
             self.extras["train/episode"]["max_command_yaw"] = self.cfg.command_ranges["ang_vel_yaw"][1]
             if self.eval_cfg is not None:
@@ -597,12 +621,20 @@ class LeggedRobot(BaseTask):
         self.env_command_bins[env_ids.cpu().numpy()] = new_bin_inds
         self.commands[env_ids, :3] = torch.Tensor(new_commands).to(self.device)
 
-        self.commands[env_ids, :2] *= (torch.norm(self.commands[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
+        self._post_process_commands(env_ids, self.cfg)
 
         # reset command sums
         for key in self.command_sums.keys():
             self.command_sums[key][env_ids] = 0.
 
+    def _post_process_commands(self, env_ids, cfg):
+        lin_cmd = torch.norm(self.commands[env_ids, :2], dim=1)
+        self.commands[env_ids, :2] *= (lin_cmd > cfg.commands.lin_vel_deadband).float().unsqueeze(1)
+        self.commands[env_ids, 2] *= (torch.abs(self.commands[env_ids, 2]) > cfg.commands.yaw_vel_deadband).float()
+
+        if cfg.commands.zero_command_probability > 0.:
+            zero_mask = torch.rand(len(env_ids), device=self.device) < cfg.commands.zero_command_probability
+            self.commands[env_ids[zero_mask], :3] = 0.
 
     def _resample_commands_uniform(self, env_ids, cfg):
         self.commands[env_ids, 0] = torch_rand_float(cfg.command_ranges["lin_vel_x"][0],
@@ -620,13 +652,12 @@ class LeggedRobot(BaseTask):
                                                          cfg.command_ranges["ang_vel_yaw"][1], (len(env_ids), 1),
                                                          device=self.device).squeeze(1)
 
-        # set small commands to zero
-        self.commands[env_ids, :2] *= (torch.norm(self.commands[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
-
         if cfg.commands.heading_command:
             forward = quat_apply(self.base_quat, self.forward_vec)
             heading = torch.atan2(forward[env_ids, 1], forward[env_ids, 0])
             self.commands[env_ids, 2] = torch.clip(0.5 * wrap_to_pi(self.commands[env_ids, 3] - heading), -1., 1.)
+
+        self._post_process_commands(env_ids, cfg)
 
     def _compute_torques(self, actions):
         """ Compute torques from actions.
@@ -1505,7 +1536,7 @@ class LeggedRobot(BaseTask):
             lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.root_states[:, 7:9]), dim=1)
         else:
             lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
-        return torch.exp(-lin_vel_error / self.cfg.rewards.tracking_sigma)
+        return torch.exp(-lin_vel_error / self.cfg.rewards.tracking_sigma) * self._gait_command_mask().float()
 
     # def _reward_tracking_lin_vel_long(self):
     #     # Tracking of linear velocity commands (xy axes)
@@ -1538,7 +1569,25 @@ class LeggedRobot(BaseTask):
     def _reward_tracking_ang_vel(self):
         # Tracking of angular velocity commands (yaw) 
         ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
-        return torch.exp(-ang_vel_error / self.cfg.rewards.tracking_sigma_yaw)
+        return torch.exp(-ang_vel_error / self.cfg.rewards.tracking_sigma_yaw) * self._gait_command_mask().float()
+
+    def _lin_command_norm(self):
+        return torch.norm(self.commands[:, :2], dim=1)
+
+    def _yaw_command_abs(self):
+        return torch.abs(self.commands[:, 2])
+
+    def _stand_command_mask(self):
+        return torch.logical_and(
+            self._lin_command_norm() < self.cfg.rewards.stand_still_lin_threshold,
+            self._yaw_command_abs() < self.cfg.rewards.stand_still_yaw_threshold
+        )
+
+    def _crawl_command_mask(self):
+        return self._lin_command_norm() <= self.cfg.rewards.crawl_lin_threshold
+
+    def _gait_command_mask(self):
+        return self._lin_command_norm() >= self.cfg.commands.gait_lin_threshold
 
     def _reward_feet_air_time(self):
         # Reward long steps
@@ -1550,7 +1599,7 @@ class LeggedRobot(BaseTask):
         self.feet_air_time += self.dt
         rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact,
                                 dim=1)  # reward only on first contact with the ground
-        rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1  # no reward for zero command
+        rew_airTime *= self._gait_command_mask().float()
         self.feet_air_time *= ~contact_filt
         return rew_airTime
 
@@ -1561,8 +1610,51 @@ class LeggedRobot(BaseTask):
 
     def _reward_stand_still(self):
         # Penalize motion at zero commands
-        return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1) * (
-                torch.norm(self.commands[:, :2], dim=1) < 0.1)
+        return torch.sum(torch.square(self.dof_pos - self.default_dof_pos), dim=1) * self._stand_command_mask().float()
+
+    def _reward_feet_contact_still(self):
+        contact = self.contact_forces[:, self.feet_indices, 2] > self.cfg.rewards.still_contact_force_threshold
+        missing_contacts = torch.sum((~contact).float(), dim=1)
+        return missing_contacts * self._stand_command_mask().float()
+
+    def _reward_still_base_vel(self):
+        body_vel = torch.sum(torch.square(self.base_lin_vel[:, :2]), dim=1) + torch.square(self.base_ang_vel[:, 2])
+        return body_vel * self._stand_command_mask().float()
+
+    def _reward_still_dof_vel(self):
+        return torch.sum(torch.square(self.dof_vel), dim=1) * self._stand_command_mask().float()
+
+    def _reward_still_action(self):
+        return torch.sum(torch.square(self.actions), dim=1) * self._stand_command_mask().float()
+
+    def _reward_crawl_feet_contact(self):
+        contact = self.contact_forces[:, self.feet_indices, 2] > self.cfg.rewards.still_contact_force_threshold
+        missing_contacts = torch.sum((~contact).float(), dim=1)
+        return missing_contacts * self._crawl_command_mask().float()
+
+    def _reward_crawl_foot_slip(self):
+        contact = self.contact_forces[:, self.feet_indices, 2] > self.cfg.rewards.still_contact_force_threshold
+        foot_xy_vel = torch.norm(self.foot_velocities[:, :, :2], dim=2)
+        return torch.sum(foot_xy_vel * contact.float(), dim=1) * self._crawl_command_mask().float()
+
+    def _reward_crawl_base_vel(self):
+        lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
+        yaw_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
+        return (lin_vel_error + yaw_vel_error) * self._crawl_command_mask().float()
+
+    def _reward_crawl_action_rate(self):
+        return torch.sum(torch.square(self.last_actions - self.actions), dim=1) * self._crawl_command_mask().float()
+
+    def _reward_crawl_dof_vel(self):
+        return torch.sum(torch.square(self.dof_vel), dim=1) * self._crawl_command_mask().float()
+
+    def _reward_crawl_action(self):
+        return torch.sum(torch.square(self.actions), dim=1) * self._crawl_command_mask().float()
+
+    def _reward_crawl_base_height(self):
+        base_height = torch.mean(self.root_states[:, 2].unsqueeze(1) - self.measured_heights, dim=1)
+        low_height = torch.relu(self.cfg.rewards.crawl_base_height_target - base_height)
+        return torch.square(low_height) * self._crawl_command_mask().float()
 
     def _reward_feet_contact_forces(self):
         # penalize high contact forces

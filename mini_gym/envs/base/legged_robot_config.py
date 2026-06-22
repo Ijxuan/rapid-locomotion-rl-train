@@ -78,6 +78,10 @@ class Cfg(PrefixProto, cli=False):
         resampling_time = 10.  # time before command are changed[s]
         heading_command = True  # if true: compute ang vel command from heading error
         global_reference = False
+        zero_command_probability = 0.25
+        lin_vel_deadband = 0.25
+        yaw_vel_deadband = 0.15
+        gait_lin_threshold = 0.30
 
         num_lin_vel_bins = 20
         lin_vel_step = 0.3
@@ -176,6 +180,11 @@ class Cfg(PrefixProto, cli=False):
         max_contact_force = 100.  # forces above this value are penalized
         use_terminal_body_height = False
         terminal_body_height = 0.20
+        stand_still_lin_threshold = 0.15
+        stand_still_yaw_threshold = 0.15
+        crawl_lin_threshold = 0.25
+        crawl_base_height_target = 0.30
+        still_contact_force_threshold = 1.0
 
         class scales(ParamsProto, cli=False, prefix="rewards.scales"):
             termination = -0.0
@@ -193,6 +202,17 @@ class Cfg(PrefixProto, cli=False):
             feet_stumble = -0.0
             action_rate = -0.01
             stand_still = -0.
+            feet_contact_still = -0.
+            still_base_vel = -0.
+            still_dof_vel = -0.
+            still_action = -0.
+            crawl_feet_contact = -0.
+            crawl_foot_slip = -0.
+            crawl_base_vel = -0.
+            crawl_action_rate = -0.
+            crawl_dof_vel = -0.
+            crawl_action = -0.
+            crawl_base_height = -0.
             tracking_lin_vel_lat = 0.
             tracking_lin_vel_long = 0.
 

@@ -39,21 +39,42 @@ def config_mini_cheetah(Cnfg: Union[Cfg, Meta]):
     _ = Cnfg.asset
     _.file = '{MINI_GYM_ROOT_DIR}/resources/robots/mini_cheetah/urdf/mini_cheetah.urdf'
     _.foot_name = "calf"
-    _.penalize_contacts_on = []
+    _.penalize_contacts_on = ["base", "trunk", "hip", "thigh"]
     _.terminate_after_contacts_on = ["base", "thigh"]
     _.self_collisions = 0  # 1 to disable, 0 to enable...bitwise filter
     _.flip_visual_attachments = False
     _.fix_base_link = False
 
     _ = Cnfg.rewards
+    _.only_positive_rewards = False
     _.soft_dof_pos_limit = 0.9
     _.base_height_target = 0.30
+    _.stand_still_lin_threshold = 0.05
+    _.stand_still_yaw_threshold = 0.05
+    _.crawl_lin_threshold = 0.25
+    _.crawl_base_height_target = 0.30
+    _.still_contact_force_threshold = 1.0
 
     _ = Cnfg.rewards.scales
     _.torques = -0.0002
     _.dof_pos_limits = -10.0
     _.orientation = -5.
     _.base_height = -30.
+    _.collision = -5.0
+    _.feet_air_time = 0.0
+    _.action_rate = -0.05
+    _.stand_still = -5.0
+    _.feet_contact_still = -10.0
+    _.still_base_vel = -0.0
+    _.still_dof_vel = -1.0
+    _.still_action = -1.0
+    _.crawl_feet_contact = -10.0
+    _.crawl_foot_slip = -0.5
+    _.crawl_base_vel = -5.0
+    _.crawl_action_rate = -0.5
+    _.crawl_dof_vel = -0.2
+    _.crawl_action = -0.1
+    _.crawl_base_height = -100.0
 
     _ = Cnfg.terrain
     _.mesh_type = 'trimesh'
@@ -77,12 +98,19 @@ def config_mini_cheetah(Cnfg: Union[Cfg, Meta]):
     _ = Cnfg.commands
     _.heading_command = False
     _.resampling_time = 10.0
-    _.command_curriculum = True
+    _.command_curriculum = False
+    _.zero_command_probability = 0.30
+    _.lin_vel_deadband = 0.03
+    _.yaw_vel_deadband = 0.05
+    _.gait_lin_threshold = 0.30
     _.num_lin_vel_bins = 30
     _.num_ang_vel_bins = 30
-    _.lin_vel_x = [-0.6, 0.6]
-    _.lin_vel_y = [-0.6, 0.6]
-    _.ang_vel_yaw = [-1, 1]
+    _.lin_vel_x = [-0.35, 0.35]
+    _.lin_vel_y = [-0.35, 0.35]
+    _.ang_vel_yaw = [-0.5, 0.5]
+    _.limit_vel_x = [-0.35, 0.35]
+    _.limit_vel_y = [-0.35, 0.35]
+    _.limit_vel_yaw = [-0.5, 0.5]
 
     _ = Cnfg.domain_rand
     _.randomize_base_mass = True

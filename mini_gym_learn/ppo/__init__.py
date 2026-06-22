@@ -241,7 +241,7 @@ class Runner:
                     logger.upload_file(file_path=adaptation_module_path, target_path=f"checkpoints/" )
                     logger.upload_file(file_path=body_path, target_path=f"checkpoints/")
 
-            self.current_learning_iteration += num_learning_iterations
+            self.current_learning_iteration = it + 1
 
         with logger.Sync():
             logger.torch_save(self.alg.actor_critic.state_dict(), f"checkpoints/ac_weights_{it:06d}.pt")
