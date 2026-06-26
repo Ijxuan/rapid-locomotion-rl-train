@@ -70,6 +70,10 @@ def load_env(headless=False):
     Cfg.terrain.num_rows = 3
     Cfg.terrain.num_cols = 5
     Cfg.terrain.border_size = 0
+
+    Cfg.viewer.pos = [1.5, -1.5, 1.0]
+    Cfg.viewer.lookat = [0.0, 0.0, 0.3]
+    # 单环境评估不需要训练时的大接触缓冲区；显存不足时可以继续调小。
     Cfg.sim.physx.max_gpu_contact_pairs = 2 ** 18
     Cfg.sim.physx.default_buffer_size_multiplier = 1
 
@@ -115,31 +119,21 @@ def play_mc(headless=True):
     logger.configure(Path(recent_runs[-1]).resolve())
 
     env, policy = load_env(headless=headless)
-    base_env = env.env
 
     # 关键可调项：低速评估命令列表，单位 m/s。
-    # 当前用于分别检查 <0.2 四脚支撑、0.2~0.5 走步态，以及 0.5 边界速度。
-    # x_vel_commands = [0.0, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5]
-    x_vel_commands = [0.0, 0.3, 0.5, 0.6, 0.3, 0.4, 0.5]
+    # 当前用于分别检查 0 速站立、0.1/0.2 准静态低速、0.3 起步态切换。
+    x_vel_commands = [0.4, 0.5, 0.6, 0.7]
 
     # 关键可调项：每个速度连续测试 20s；想快速看效果可以改成 5.0 或 10.0。
-    num_eval_steps = int(3.0 / env.dt)
+    num_eval_steps = int(5.0 / env.dt)
 
-    walk_sequence_indices = base_env.walk_swing_sequence_indices.cpu().numpy()
-    walk_sequence_names = base_env.cfg.rewards.walk_swing_sequence
-
-    # 记录每个速度下的前向速度、有效足端接触数、走步态指标，以及 0 速时的 12 个关节位置。
+    # 记录每个速度下的前向速度、有效足端接触数，以及 0 速时的 12 个关节位置。
     measured_x_vels = np.zeros((len(x_vel_commands), num_eval_steps))
     contact_counts = np.zeros_like(measured_x_vels)
-    exact3_ratios = np.full(len(x_vel_commands), np.nan)
-    sequence_match_ratios = np.full(len(x_vel_commands), np.nan)
-    swing_duty_ratios = np.zeros((len(x_vel_commands), len(walk_sequence_indices)))
     zero_command_joint_positions = np.zeros((num_eval_steps, 12))
 
     # 打印一行量化指标，方便和视频/渲染观察相互校验。
-    swing_header = "  ".join([f"{name}_swing" for name in walk_sequence_names])
-    print(f"cmd  vx_mae  support_ratio  exact3  seq_match  illegal_calf  max_toe_z  "
-          f"min_base_z  dof_vel_rms  {swing_header}")
+    print("cmd  vx_mae  support_ratio  illegal_calf  max_toe_z  min_base_z  dof_vel_rms")
     for command_index, x_vel_cmd in enumerate(x_vel_commands):
         obs = env.reset()
 
@@ -155,10 +149,6 @@ def play_mc(headless=True):
         maximum_toe_height = -np.inf
         minimum_base_height = np.inf
         dof_velocity_sq_sum = 0.
-        exact3_steps = 0
-        sequence_match_steps = 0
-        walk_steps = 0
-        swing_counts = np.zeros(len(walk_sequence_indices))
         for i in tqdm(range(num_eval_steps), desc=f"vx={x_vel_cmd:.1f}"):
             # 每一步都重写固定命令，防止环境内部 reset/resample 逻辑改变测试命令。
             env.commands[:, :3] = torch.tensor([x_vel_cmd, 0.0, 0.0], device=env.device)
@@ -173,36 +163,20 @@ def play_mc(headless=True):
             maximum_toe_height = max(maximum_toe_height, env.virtual_foot_clearances[0].max().item())
             minimum_base_height = min(minimum_base_height, env.root_states[0, 2].item())
             dof_velocity_sq_sum += torch.mean(torch.square(env.dof_vel[0])).item()
-            contacts = env.valid_foot_contacts[0]
-            swing_counts += (~contacts[walk_sequence_indices]).float().cpu().numpy()
-            if base_env._walk_command_mask()[0].item():
-                walk_steps += 1
-                exact3_steps += int(contact_counts[command_index, i] == 3)
-                expected_contacts = ~base_env._walk_target_swing_mask()[0]
-                sequence_match_steps += int(torch.all(contacts == expected_contacts).item())
             if command_index == 0:
                 zero_command_joint_positions[i] = env.dof_pos[0, :].cpu()
 
-        if walk_steps > 0:
-            exact3_ratios[command_index] = exact3_steps / walk_steps
-            sequence_match_ratios[command_index] = sequence_match_steps / walk_steps
-        swing_duty_ratios[command_index] = swing_counts / num_eval_steps
-
-        # <0.2 速度要求四脚支撑；0.2~0.5 走步态要求至少三脚支撑，同时看 exact3/seq_match。
-        if abs(x_vel_cmd) < base_env.cfg.rewards.low_speed_threshold:
-            support_ratio = np.mean(contact_counts[command_index] >= 4)
-        else:
-            support_ratio = np.mean(contact_counts[command_index] >= 3)
+        # 0 速要求四脚支撑；0.1/0.2/0.3 允许最多一条腿摆动，所以用三脚支撑作为最低验收线。
+        required_contacts = 4 if x_vel_cmd == 0.0 else 3
+        support_ratio = np.mean(contact_counts[command_index] >= required_contacts)
 
         # vx_mae 越小表示速度跟踪越准；但低速阶段还要同时看 support_ratio 和 illegal_calf。
         vx_mae = np.mean(np.abs(measured_x_vels[command_index] - x_vel_cmd))
         illegal_contact_ratio = illegal_contact_steps / num_eval_steps
         dof_velocity_rms = np.sqrt(dof_velocity_sq_sum / num_eval_steps)
-        swing_values = "  ".join([f"{value:8.3f}" for value in swing_duty_ratios[command_index]])
-        print(f"{x_vel_cmd:3.2f}  {vx_mae:6.3f}  {support_ratio:13.3f}  "
-              f"{exact3_ratios[command_index]:6.3f}  {sequence_match_ratios[command_index]:9.3f}  "
+        print(f"{x_vel_cmd:3.1f}  {vx_mae:6.3f}  {support_ratio:13.3f}  "
               f"{illegal_contact_ratio:12.3f}  {maximum_toe_height:10.3f}  "
-              f"{minimum_base_height:10.3f}  {dof_velocity_rms:11.3f}  {swing_values}")
+              f"{minimum_base_height:10.3f}  {dof_velocity_rms:11.3f}")
 
     from matplotlib import pyplot as plt
     time_axis = np.linspace(0, num_eval_steps * env.dt, num_eval_steps)

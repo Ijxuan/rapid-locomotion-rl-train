@@ -173,6 +173,7 @@ class LeggedRobot(BaseTask):
 
         self.foot_velocities = self.rigid_body_state.view(self.num_envs, self.num_bodies, 13
                                                           )[:, self.feet_indices, 7:10]
+        self._update_virtual_feet()
 
         self._post_physics_step_callback()
 
@@ -183,9 +184,15 @@ class LeggedRobot(BaseTask):
         self.reset_idx(env_ids)
         self.compute_observations()
 
+        self.last_last_actions[:] = self.last_actions[:]
         self.last_actions[:] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
         self.last_root_vel[:] = self.root_states[:, 7:13]
+        if len(env_ids) > 0:
+            self.last_actions[env_ids] = 0.
+            self.last_last_actions[env_ids] = 0.
+            self.last_dof_vel[env_ids] = 0.
+            self.last_root_vel[env_ids] = 0.
 
         if self.viewer and self.enable_viewer_sync and self.debug_viz:
             self._draw_debug_vis()
@@ -195,14 +202,23 @@ class LeggedRobot(BaseTask):
     def check_termination(self):
         """ Check if environments need to be reset
         """
-        self.reset_buf = torch.any(torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1.,
-                                   dim=1)
+        contact_termination = torch.any(
+            torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1., dim=1)
+        illegal_calf_termination = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        if self.cfg.rewards.use_virtual_foot_contact:
+            illegal_contact_limit = max(1, int(np.ceil(self.cfg.rewards.illegal_calf_contact_time / self.dt)))
+            illegal_calf_termination = self.illegal_calf_contact_steps >= illegal_contact_limit
         self.time_out_buf = self.episode_length_buf > self.cfg.env.max_episode_length  # no terminal reward for time-outs
-        self.reset_buf |= self.time_out_buf
+        body_height_termination = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         if self.cfg.rewards.use_terminal_body_height:
             self.body_height_buf = torch.mean(self.root_states[:, 2].unsqueeze(1) - self.measured_heights, dim=1) \
                                    < self.cfg.rewards.terminal_body_height
-            self.reset_buf = torch.logical_or(self.body_height_buf, self.reset_buf)
+            body_height_termination = self.body_height_buf
+
+        self.termination_contact_body_buf[:] = torch.logical_and(contact_termination, ~self.time_out_buf)
+        self.termination_body_height_buf[:] = torch.logical_and(body_height_termination, ~self.time_out_buf)
+        self.termination_illegal_calf_buf[:] = torch.logical_and(illegal_calf_termination, ~self.time_out_buf)
+        self.reset_buf = contact_termination | illegal_calf_termination | body_height_termination | self.time_out_buf
 
     def reset_evaluation_envs(self):
         if self.eval_cfg is None: return
@@ -240,6 +256,8 @@ class LeggedRobot(BaseTask):
 
         if len(env_ids) == 0:
             return
+        episode_lengths_s = self.episode_length_buf[env_ids].float() * self.dt
+        terminated = (~self.time_out_buf[env_ids]).float()
         # update curriculum
 
         self._call_train_eval(self._update_terrain_curriculum, env_ids)
@@ -255,8 +273,19 @@ class LeggedRobot(BaseTask):
 
         # reset buffersew
         self.last_actions[env_ids] = 0.
+        self.last_last_actions[env_ids] = 0.
         self.last_dof_vel[env_ids] = 0.
         self.feet_air_time[env_ids] = 0.
+        self.gait_swing_ema[env_ids] = 0.
+        self.walk_phase_start_steps[env_ids] = 0
+        self.walk_active_swing_leg[env_ids] = -1
+        self.walk_swing_history[env_ids] = -1
+        self.walk_new_swing_event[env_ids] = False
+        self.walk_repeat_last_leg_buf[env_ids] = 0.
+        self.walk_repeat_recent_leg_buf[env_ids] = 0.
+        self.walk_swing_leg_coverage_buf[env_ids] = 0.
+        self.last_contacts[env_ids] = False
+        self.illegal_calf_contact_steps[env_ids] = 0
         self.episode_length_buf[env_ids] = 0
         self.reset_buf[env_ids] = 1
         # fill extras
@@ -267,6 +296,17 @@ class LeggedRobot(BaseTask):
                 self.extras["train/episode"]['rew_' + key] = torch.mean(
                     self.episode_sums[key][train_env_ids])  # / self.cfg.env.episode_length_s
                 self.episode_sums[key][train_env_ids] = 0.
+            train_mask = env_ids < self.num_train_envs
+            self.extras["train/episode"]["episode_length_s"] = torch.mean(episode_lengths_s[train_mask])
+            self.extras["train/episode"]["termination_rate"] = torch.mean(terminated[train_mask])
+            self.extras["train/episode"]["termination_contact_body_rate"] = torch.mean(
+                self.termination_contact_body_buf[train_env_ids].float())
+            self.extras["train/episode"]["termination_body_height_rate"] = torch.mean(
+                self.termination_body_height_buf[train_env_ids].float())
+            self.extras["train/episode"]["termination_illegal_calf_rate"] = torch.mean(
+                self.termination_illegal_calf_buf[train_env_ids].float())
+            if self.cfg.rewards.use_virtual_foot_contact:
+                self._log_low_speed_diagnostics(train_env_ids)
         eval_env_ids = env_ids[env_ids >= self.num_train_envs]
         if len(eval_env_ids) > 0:
             self.extras["eval/episode"] = {}
@@ -282,7 +322,7 @@ class LeggedRobot(BaseTask):
                 self.terrain_levels[:self.num_train_envs].float())
         if hasattr(self, "env_command_bins"):
             self.extras["env_bins"] = torch.Tensor(self.env_command_bins)[:self.num_train_envs]
-            if "train/episode" in self.extras:
+            if "train/episode" in self.extras and self.cfg.commands.command_curriculum:
                 self.extras["train/episode"]["command_area"] = np.sum(self.curriculum.weights) / self.curriculum.weights.shape[0]
         if self.cfg.commands.yaw_command_curriculum:
             self.extras["train/episode"]["max_command_yaw"] = self.cfg.command_ranges["ang_vel_yaw"][1]
@@ -291,6 +331,7 @@ class LeggedRobot(BaseTask):
         # send timeout info to the algorithm
         if self.cfg.env.send_timeouts:
             self.extras["time_outs"] = self.time_out_buf[:self.num_train_envs]
+        self._reset_low_speed_diagnostics(env_ids)
 
     def set_idx_pose(self, env_ids, dof_pos, base_state):
         if len(env_ids) == 0:
@@ -320,6 +361,7 @@ class LeggedRobot(BaseTask):
             adds each terms to the episode sums and to the total reward
         """
         self.rew_buf[:] = 0.
+        self._update_walk_swing_history()
         for i in range(len(self.reward_functions)):
             name = self.reward_names[i]
             rew = self.reward_functions[i]() * self.reward_scales[name]
@@ -328,13 +370,15 @@ class LeggedRobot(BaseTask):
             self.command_sums[name] += rew
         if self.cfg.rewards.only_positive_rewards:
             self.rew_buf[:] = torch.clip(self.rew_buf[:], min=0.)
-        self.episode_sums["total"] += self.rew_buf
         # add termination reward after clipping
         if "termination" in self.reward_scales:
             rew = self._reward_termination() * self.reward_scales["termination"]
             self.rew_buf += rew
             self.episode_sums["termination"] += rew
             self.command_sums["termination"] += rew
+        self.episode_sums["total"] += self.rew_buf
+        if self.cfg.rewards.use_virtual_foot_contact:
+            self._accumulate_low_speed_diagnostics()
 
         self.command_sums["lin_vel_raw"] += self.base_lin_vel[:, 0]
         self.command_sums["ang_vel_raw"] += self.base_ang_vel[:, 2]
@@ -598,6 +642,12 @@ class LeggedRobot(BaseTask):
 
         if len(env_ids) == 0: return
 
+        if self.cfg.commands.use_low_speed_command_sampler:
+            self._call_train_eval(self._resample_commands_low_speed, env_ids)
+            for key in self.command_sums.keys():
+                self.command_sums[key][env_ids] = 0.
+            return
+
         train_env_ids = env_ids[env_ids < self.num_train_envs]
         eval_env_ids = env_ids[env_ids >= self.num_train_envs]
 
@@ -626,6 +676,52 @@ class LeggedRobot(BaseTask):
         # reset command sums
         for key in self.command_sums.keys():
             self.command_sums[key][env_ids] = 0.
+
+    def _resample_commands_low_speed(self, env_ids, cfg):
+        stop_probability = cfg.commands.zero_command_probability
+        low_probability = cfg.commands.low_command_probability
+        walk_probability = cfg.commands.walk_command_probability
+        total_probability = stop_probability + low_probability + walk_probability
+        if stop_probability < 0. or low_probability < 0. or walk_probability < 0. or total_probability > 1.:
+            raise ValueError("Low-speed command probabilities must be non-negative and sum to at most one")
+
+        count = len(env_ids)
+        sample = torch.rand(count, device=self.device)
+        low_mask = torch.logical_and(sample >= stop_probability,
+                                     sample < stop_probability + low_probability)
+        walk_mask = torch.logical_and(sample >= stop_probability + low_probability,
+                                      sample < total_probability)
+        run_mask = sample >= total_probability
+
+        self.commands[env_ids, :3] = 0.
+        regime_bins = torch.zeros(count, dtype=torch.long, device=self.device)
+        self.walk_phase_start_steps[env_ids] = self.episode_length_buf[env_ids]
+
+        low_ids = env_ids[low_mask]
+        if len(low_ids) > 0:
+            values = torch.tensor(cfg.commands.low_command_values, dtype=torch.float, device=self.device)
+            value_ids = torch.randint(len(values), (len(low_ids),), device=self.device)
+            jitter = torch_rand_float(-cfg.commands.low_command_jitter, cfg.commands.low_command_jitter,
+                                      (len(low_ids),), device=self.device)
+            low_commands = torch.clamp(values[value_ids] + jitter, min=0., max=self.cfg.rewards.low_speed_threshold)
+            self.commands[low_ids, 0] = low_commands
+            regime_bins[low_mask] = 1
+
+        walk_ids = env_ids[walk_mask]
+        if len(walk_ids) > 0:
+            walk_min, walk_max = cfg.commands.walk_command_range
+            self.commands[walk_ids, 0] = torch_rand_float(walk_min, walk_max, (len(walk_ids),),
+                                                          device=self.device)
+            regime_bins[walk_mask] = 2
+
+        run_ids = env_ids[run_mask]
+        if len(run_ids) > 0:
+            gait_min, gait_max = cfg.commands.gait_command_range
+            self.commands[run_ids, 0] = torch_rand_float(gait_min, gait_max, (len(run_ids),),
+                                                         device=self.device)
+            regime_bins[run_mask] = 3
+
+        self.env_command_bins[env_ids.cpu().numpy()] = regime_bins.cpu().numpy()
 
     def _post_process_commands(self, env_ids, cfg):
         lin_cmd = torch.norm(self.commands[env_ids, :2], dim=1)
@@ -981,6 +1077,7 @@ class LeggedRobot(BaseTask):
                                    requires_grad=False)
         self.last_actions = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device,
                                         requires_grad=False)
+        self.last_last_actions = torch.zeros_like(self.last_actions)
         self.last_dof_vel = torch.zeros_like(self.dof_vel)
         self.last_root_vel = torch.zeros_like(self.root_states[:, 7:13])
 
@@ -993,8 +1090,53 @@ class LeggedRobot(BaseTask):
 
         self.feet_air_time = torch.zeros(self.num_envs, self.feet_indices.shape[0], dtype=torch.float,
                                          device=self.device, requires_grad=False)
+        self.gait_swing_ema = torch.zeros_like(self.feet_air_time)
+        self.walk_phase_start_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device,
+                                                  requires_grad=False)
+        self.walk_active_swing_leg = -torch.ones(self.num_envs, dtype=torch.long, device=self.device,
+                                                 requires_grad=False)
+        self.walk_swing_history = -torch.ones(self.num_envs, len(self.feet_indices), dtype=torch.long,
+                                              device=self.device, requires_grad=False)
+        self.walk_new_swing_event = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device,
+                                                requires_grad=False)
+        self.walk_repeat_last_leg_buf = torch.zeros(self.num_envs, dtype=torch.float, device=self.device,
+                                                    requires_grad=False)
+        self.walk_repeat_recent_leg_buf = torch.zeros_like(self.walk_repeat_last_leg_buf)
+        self.walk_swing_leg_coverage_buf = torch.zeros_like(self.walk_repeat_last_leg_buf)
         self.last_contacts = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device,
                                          requires_grad=False)
+        self.virtual_foot_local_offsets = torch.zeros(self.num_envs, len(self.feet_indices), 3,
+                                                      dtype=torch.float, device=self.device, requires_grad=False)
+        self.virtual_foot_local_offsets[:, :, 2] = -self.cfg.rewards.virtual_foot_offset
+        self.virtual_foot_positions = torch.zeros_like(self.virtual_foot_local_offsets)
+        self.virtual_foot_velocities = torch.zeros_like(self.virtual_foot_local_offsets)
+        self.virtual_foot_clearances = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.float,
+                                                   device=self.device, requires_grad=False)
+        self.valid_foot_contacts = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool,
+                                               device=self.device, requires_grad=False)
+        self.illegal_calf_contacts = torch.zeros_like(self.valid_foot_contacts)
+        self.illegal_calf_contact_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device,
+                                                      requires_grad=False)
+        self.termination_contact_body_buf = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device,
+                                                        requires_grad=False)
+        self.termination_body_height_buf = torch.zeros_like(self.termination_contact_body_buf)
+        self.termination_illegal_calf_buf = torch.zeros_like(self.termination_contact_body_buf)
+
+        diagnostic_names = [
+            "stand_contact_count", "stand_velocity_error", "crawl_contact_count",
+            "crawl_toe_clearance", "crawl_foot_slip", "crawl_velocity_error",
+            "walk_contact_count", "walk_exact3_rate", "walk_sequence_match", "walk_swing_progress",
+            "walk_repeat_last_leg_rate", "walk_repeat_recent_leg_rate", "walk_swing_leg_coverage_rate",
+            "gait_velocity_error", "gait_swing_balance", "illegal_calf_contact_rate"
+        ]
+        self.low_speed_diagnostic_sums = {
+            name: torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
+            for name in diagnostic_names
+        }
+        self.low_speed_diagnostic_counts = {
+            name: torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
+            for name in ["stand", "crawl", "walk", "walk_event", "gait", "all"]
+        }
         self.base_lin_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
         self.base_ang_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
         self.projected_gravity = quat_rotate_inverse(self.base_quat, self.gravity_vec)
@@ -1017,6 +1159,114 @@ class LeggedRobot(BaseTask):
                 if self.cfg.control.control_type in ["P", "V"]:
                     print(f"PD gain of joint {name} were not defined, setting them to zero")
         self.default_dof_pos = self.default_dof_pos.unsqueeze(0)
+
+    def _update_virtual_feet(self):
+        body_states = self.rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.feet_indices]
+        calf_positions = body_states[:, :, :3]
+        calf_quaternions = body_states[:, :, 3:7]
+        calf_linear_velocities = body_states[:, :, 7:10]
+        calf_angular_velocities = body_states[:, :, 10:13]
+
+        world_offsets = quat_apply(calf_quaternions, self.virtual_foot_local_offsets)
+        self.virtual_foot_positions[:] = calf_positions + world_offsets
+        self.virtual_foot_velocities[:] = calf_linear_velocities + torch.cross(
+            calf_angular_velocities, world_offsets, dim=-1)
+        self.virtual_foot_clearances[:] = self.virtual_foot_positions[:, :, 2] - self.env_origins[:, None, 2]
+
+        vertical_contact = self.contact_forces[:, self.feet_indices, 2] > \
+                           self.cfg.rewards.still_contact_force_threshold
+        calf_contact = torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1) > \
+                       self.cfg.rewards.still_contact_force_threshold
+        if self.cfg.rewards.use_virtual_foot_contact:
+            toe_is_low = self.virtual_foot_clearances < self.cfg.rewards.valid_foot_height_threshold
+            self.valid_foot_contacts[:] = torch.logical_and(vertical_contact, toe_is_low)
+            self.illegal_calf_contacts[:] = torch.logical_and(calf_contact, ~toe_is_low)
+        else:
+            self.valid_foot_contacts[:] = vertical_contact
+            self.illegal_calf_contacts[:] = False
+
+        illegal_contact = torch.any(self.illegal_calf_contacts, dim=1)
+        self.illegal_calf_contact_steps[:] = torch.where(
+            illegal_contact, self.illegal_calf_contact_steps + 1,
+            torch.zeros_like(self.illegal_calf_contact_steps))
+
+    def _accumulate_low_speed_diagnostics(self):
+        stand = self._stand_command_mask().float()
+        crawl = self._crawl_command_mask().float()
+        walk = self._walk_command_mask().float()
+        gait = self._gait_command_mask().float()
+        contact_count = torch.sum(self.valid_foot_contacts.float(), dim=1)
+        velocity_error = torch.norm(self.commands[:, :2] - self.base_lin_vel[:, :2], dim=1)
+        swing = (~self.valid_foot_contacts).float()
+        swing_count = torch.sum(swing, dim=1).clamp(min=1.)
+        swing_clearance = torch.sum(self.virtual_foot_clearances * swing, dim=1) / swing_count
+        slip = torch.sum(torch.sum(torch.square(self.virtual_foot_velocities[:, :, :2]), dim=2) *
+                         self.valid_foot_contacts.float(), dim=1)
+        walk_target_swing = self._walk_target_swing_mask()
+        walk_expected_contacts = ~walk_target_swing
+        walk_exact_three = (contact_count == 3.).float()
+        walk_sequence_match = torch.all(self.valid_foot_contacts == walk_expected_contacts, dim=1).float()
+        walk_swing_progress = torch.clamp(self._walk_actual_swing_progress(), min=0., max=1.0)
+
+        self.low_speed_diagnostic_sums["stand_contact_count"] += contact_count * stand
+        self.low_speed_diagnostic_sums["stand_velocity_error"] += velocity_error * stand
+        self.low_speed_diagnostic_sums["crawl_contact_count"] += contact_count * crawl
+        self.low_speed_diagnostic_sums["crawl_toe_clearance"] += swing_clearance * crawl
+        self.low_speed_diagnostic_sums["crawl_foot_slip"] += slip * crawl
+        self.low_speed_diagnostic_sums["crawl_velocity_error"] += velocity_error * crawl
+        self.low_speed_diagnostic_sums["walk_contact_count"] += contact_count * walk
+        self.low_speed_diagnostic_sums["walk_exact3_rate"] += walk_exact_three * walk
+        self.low_speed_diagnostic_sums["walk_sequence_match"] += walk_sequence_match * walk
+        self.low_speed_diagnostic_sums["walk_swing_progress"] += walk_swing_progress * walk
+        self.low_speed_diagnostic_sums["walk_repeat_last_leg_rate"] += self.walk_repeat_last_leg_buf
+        self.low_speed_diagnostic_sums["walk_repeat_recent_leg_rate"] += self.walk_repeat_recent_leg_buf
+        self.low_speed_diagnostic_sums["walk_swing_leg_coverage_rate"] += self.walk_swing_leg_coverage_buf
+        self.low_speed_diagnostic_sums["gait_velocity_error"] += velocity_error * gait
+        self.low_speed_diagnostic_sums["gait_swing_balance"] += torch.var(
+            self.gait_swing_ema, dim=1, unbiased=False) * gait
+        self.low_speed_diagnostic_sums["illegal_calf_contact_rate"] += torch.any(
+            self.illegal_calf_contacts, dim=1).float()
+        self.low_speed_diagnostic_counts["stand"] += stand
+        self.low_speed_diagnostic_counts["crawl"] += crawl
+        self.low_speed_diagnostic_counts["walk"] += walk
+        self.low_speed_diagnostic_counts["walk_event"] += self.walk_new_swing_event.float()
+        self.low_speed_diagnostic_counts["gait"] += gait
+        self.low_speed_diagnostic_counts["all"] += 1.
+
+    def _log_low_speed_diagnostics(self, env_ids):
+        count_for_metric = {
+            "stand_contact_count": "stand",
+            "stand_velocity_error": "stand",
+            "crawl_contact_count": "crawl",
+            "crawl_toe_clearance": "crawl",
+            "crawl_foot_slip": "crawl",
+            "crawl_velocity_error": "crawl",
+            "walk_contact_count": "walk",
+            "walk_exact3_rate": "walk",
+            "walk_sequence_match": "walk",
+            "walk_swing_progress": "walk",
+            "walk_repeat_last_leg_rate": "walk_event",
+            "walk_repeat_recent_leg_rate": "walk_event",
+            "walk_swing_leg_coverage_rate": "walk_event",
+            "gait_velocity_error": "gait",
+            "gait_swing_balance": "gait",
+            "illegal_calf_contact_rate": "all",
+        }
+        for metric, count_name in count_for_metric.items():
+            counts = self.low_speed_diagnostic_counts[count_name][env_ids]
+            valid = counts > 0
+            if torch.any(valid):
+                values = self.low_speed_diagnostic_sums[metric][env_ids][valid] / counts[valid]
+                mean_value = torch.mean(values)
+            else:
+                mean_value = torch.zeros((), device=self.device)
+            self.extras["train/episode"]["diag_" + metric] = mean_value
+
+    def _reset_low_speed_diagnostics(self, env_ids):
+        for values in self.low_speed_diagnostic_sums.values():
+            values[env_ids] = 0.
+        for values in self.low_speed_diagnostic_counts.values():
+            values[env_ids] = 0.
 
     def _init_custom_buffers__(self):
         # domain randomization properties
@@ -1240,6 +1490,14 @@ class LeggedRobot(BaseTask):
         for i in range(len(feet_names)):
             self.feet_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.actor_handles[0],
                                                                          feet_names[i])
+        walk_sequence_indices = []
+        for leg_name in self.cfg.rewards.walk_swing_sequence:
+            matches = [i for i, foot_name in enumerate(feet_names) if foot_name.startswith(leg_name + "_")]
+            if len(matches) != 1:
+                raise ValueError(f"Could not map walk swing leg '{leg_name}' into feet names {feet_names}")
+            walk_sequence_indices.append(matches[0])
+        self.walk_swing_sequence_indices = torch.tensor(walk_sequence_indices, dtype=torch.long,
+                                                        device=self.device, requires_grad=False)
 
         self.penalised_contact_indices = torch.zeros(len(penalized_contact_names), dtype=torch.long, device=self.device,
                                                      requires_grad=False)
@@ -1361,9 +1619,10 @@ class LeggedRobot(BaseTask):
         else:
             self.custom_origins = False
             # create a grid of robots
-            num_cols = np.floor(np.sqrt(len(env_ids)))
-            num_rows = np.ceil(self.num_envs / num_cols)
-            xx, yy = torch.meshgrid(torch.arange(num_rows), torch.arange(num_cols))
+            num_cols = int(np.floor(np.sqrt(len(env_ids))))
+            num_rows = int(np.ceil(self.num_envs / num_cols))
+            xx, yy = torch.meshgrid(torch.arange(num_rows, device=self.device),
+                                    torch.arange(num_cols, device=self.device))
             spacing = cfg.env.env_spacing
             self.env_origins[env_ids, 0] = spacing * xx.flatten()[:len(env_ids)]
             self.env_origins[env_ids, 1] = spacing * yy.flatten()[:len(env_ids)]
@@ -1499,6 +1758,10 @@ class LeggedRobot(BaseTask):
         # Penalize changes in actions
         return torch.sum(torch.square(self.last_actions - self.actions), dim=1)
 
+    def _reward_action_smoothness_2(self):
+        action_acceleration = self.actions - 2. * self.last_actions + self.last_last_actions
+        return torch.sum(torch.square(action_acceleration), dim=1)
+
     def _reward_collision(self):
         # Penalize collisions on selected bodies
         return torch.sum(1. * (torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 0.1),
@@ -1536,7 +1799,7 @@ class LeggedRobot(BaseTask):
             lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.root_states[:, 7:9]), dim=1)
         else:
             lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
-        return torch.exp(-lin_vel_error / self.cfg.rewards.tracking_sigma) * self._gait_command_mask().float()
+        return torch.exp(-lin_vel_error / self.cfg.rewards.tracking_sigma)
 
     # def _reward_tracking_lin_vel_long(self):
     #     # Tracking of linear velocity commands (xy axes)
@@ -1569,7 +1832,7 @@ class LeggedRobot(BaseTask):
     def _reward_tracking_ang_vel(self):
         # Tracking of angular velocity commands (yaw) 
         ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
-        return torch.exp(-ang_vel_error / self.cfg.rewards.tracking_sigma_yaw) * self._gait_command_mask().float()
+        return torch.exp(-ang_vel_error / self.cfg.rewards.tracking_sigma_yaw)
 
     def _lin_command_norm(self):
         return torch.norm(self.commands[:, :2], dim=1)
@@ -1583,25 +1846,148 @@ class LeggedRobot(BaseTask):
             self._yaw_command_abs() < self.cfg.rewards.stand_still_yaw_threshold
         )
 
+    def _low_command_mask(self):
+        return self._lin_command_norm() < self.cfg.rewards.low_speed_threshold
+
     def _crawl_command_mask(self):
-        return self._lin_command_norm() <= self.cfg.rewards.crawl_lin_threshold
+        return torch.logical_and(
+            ~self._stand_command_mask(),
+            self._low_command_mask()
+        )
+
+    def _walk_command_mask(self):
+        lin_norm = self._lin_command_norm()
+        return torch.logical_and(
+            lin_norm >= self.cfg.rewards.walk_min_speed,
+            lin_norm < self.cfg.rewards.walk_max_speed
+        )
+
+    def _run_command_mask(self):
+        return self._lin_command_norm() >= self.cfg.rewards.run_min_speed
 
     def _gait_command_mask(self):
-        return self._lin_command_norm() >= self.cfg.commands.gait_lin_threshold
+        return self._run_command_mask()
+
+    def _walk_phase_index(self):
+        elapsed_steps = torch.clamp(self.episode_length_buf - self.walk_phase_start_steps, min=0)
+        elapsed_time = elapsed_steps.float() * self.dt
+        phase = torch.floor(elapsed_time / self.cfg.rewards.walk_step_duration).long()
+        return phase % self.walk_swing_sequence_indices.shape[0]
+
+    def _walk_target_swing_mask(self):
+        phase = self._walk_phase_index()
+        target_feet = self.walk_swing_sequence_indices[phase]
+        mask = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device)
+        mask[torch.arange(self.num_envs, device=self.device), target_feet] = True
+        return mask
+
+    def _walk_valid_single_swing_mask(self):
+        contact_count = torch.sum(self.valid_foot_contacts.float(), dim=1)
+        return torch.logical_and(self._walk_command_mask(), contact_count == 3.)
+
+    def _walk_actual_swing_mask(self):
+        valid_single_swing = self._walk_valid_single_swing_mask().unsqueeze(1)
+        return torch.logical_and(~self.valid_foot_contacts, valid_single_swing)
+
+    def _foot_velocities_body_frame(self):
+        foot_vel = self.virtual_foot_velocities.reshape(-1, 3)
+        base_quat = self.base_quat.repeat_interleave(len(self.feet_indices), dim=0)
+        return quat_rotate_inverse(base_quat, foot_vel).view(self.num_envs, len(self.feet_indices), 3)
+
+    def _walk_actual_swing_progress(self):
+        actual_swing = self._walk_actual_swing_mask().float()
+        cmd_norm = torch.norm(self.commands[:, :2], dim=1).clamp(min=1e-6)
+        cmd_dir = self.commands[:, :2] / cmd_norm.unsqueeze(1)
+        foot_vel_body = self._foot_velocities_body_frame()
+        foot_progress = torch.sum(foot_vel_body[:, :, :2] * cmd_dir.unsqueeze(1), dim=2)
+        return torch.sum(foot_progress * actual_swing, dim=1)
+
+    def _update_walk_swing_history(self):
+        actual_swing = self._walk_actual_swing_mask()
+        valid_single_swing = self._walk_valid_single_swing_mask()
+        swing_leg = torch.argmax(actual_swing.long(), dim=1)
+        new_event = torch.logical_and(valid_single_swing, self.walk_active_swing_leg != swing_leg)
+        old_history = self.walk_swing_history
+
+        repeat_last = torch.logical_and(new_event, old_history[:, 0] == swing_leg)
+        repeat_recent = torch.logical_and(new_event, old_history[:, 1] == swing_leg)
+
+        updated_history = old_history.clone()
+        if torch.any(new_event):
+            updated_history[new_event, 1:] = old_history[new_event, :-1]
+            updated_history[new_event, 0] = swing_leg[new_event]
+
+        unique_count = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+        for leg_id in range(len(self.feet_indices)):
+            unique_count += torch.any(updated_history == leg_id, dim=1).float()
+
+        self.walk_new_swing_event[:] = new_event
+        self.walk_repeat_last_leg_buf[:] = repeat_last.float()
+        self.walk_repeat_recent_leg_buf[:] = repeat_recent.float()
+        self.walk_swing_leg_coverage_buf[:] = torch.logical_and(
+            new_event, unique_count == float(len(self.feet_indices))).float()
+        self.walk_swing_history[:] = updated_history
+        self.walk_active_swing_leg[:] = torch.where(
+            valid_single_swing, swing_leg, torch.full_like(self.walk_active_swing_leg, -1))
 
     def _reward_feet_air_time(self):
         # Reward long steps
         # Need to filter the contacts because the contact reporting of PhysX is unreliable on meshes
-        contact = self.contact_forces[:, self.feet_indices, 2] > 1.
+        contact = self.valid_foot_contacts
         contact_filt = torch.logical_or(contact, self.last_contacts)
         self.last_contacts = contact
         first_contact = (self.feet_air_time > 0.) * contact_filt
         self.feet_air_time += self.dt
-        rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact,
-                                dim=1)  # reward only on first contact with the ground
+        rewarded_air_time = torch.clamp(self.feet_air_time - self.cfg.rewards.feet_air_time_target,
+                                        min=0., max=0.35)
+        rew_airTime = torch.sum(rewarded_air_time * first_contact, dim=1)
         rew_airTime *= self._gait_command_mask().float()
         self.feet_air_time *= ~contact_filt
         return rew_airTime
+
+    def _reward_gait_swing_balance(self):
+        swing = (~self.valid_foot_contacts).float()
+        gait = self._gait_command_mask().float().unsqueeze(1)
+        alpha = self.cfg.rewards.gait_swing_balance_ema_alpha
+        updated_ema = (1. - alpha) * self.gait_swing_ema + alpha * swing
+        self.gait_swing_ema[:] = torch.where(gait > 0., updated_ema, self.gait_swing_ema)
+        return torch.var(self.gait_swing_ema, dim=1, unbiased=False) * gait.squeeze(1)
+
+    def _reward_walk_exact_three_contacts(self):
+        contact_count = torch.sum(self.valid_foot_contacts.float(), dim=1)
+        return torch.square(contact_count - 3.) * self._walk_command_mask().float()
+
+    def _reward_walk_sequence_contact(self):
+        target_swing = self._walk_target_swing_mask()
+        expected_contact = ~target_swing
+        mismatch = self.valid_foot_contacts != expected_contact
+        return torch.sum(mismatch.float(), dim=1) * self._walk_command_mask().float()
+
+    def _reward_walk_swing_clearance(self):
+        actual_swing = self._walk_actual_swing_mask().float()
+        target_error = torch.square(
+            self.virtual_foot_clearances - self.cfg.rewards.walk_swing_height_target)
+        excess_height = torch.square(torch.relu(
+            self.virtual_foot_clearances - self.cfg.rewards.walk_swing_height_max))
+        return torch.sum((target_error + excess_height) * actual_swing, dim=1)
+
+    def _reward_walk_stance_slip(self):
+        actual_swing = self._walk_actual_swing_mask()
+        stance_contact = torch.logical_and(~actual_swing, self.valid_foot_contacts).float()
+        foot_xy_speed_sq = torch.sum(torch.square(self.virtual_foot_velocities[:, :, :2]), dim=2)
+        return torch.sum(foot_xy_speed_sq * stance_contact, dim=1) * self._walk_command_mask().float()
+
+    def _reward_walk_swing_progress(self):
+        return torch.clamp(self._walk_actual_swing_progress(), min=0., max=1.0)
+
+    def _reward_walk_repeat_last_leg(self):
+        return self.walk_repeat_last_leg_buf / self.dt
+
+    def _reward_walk_repeat_recent_leg(self):
+        return self.walk_repeat_recent_leg_buf / self.dt
+
+    def _reward_walk_swing_leg_coverage(self):
+        return self.walk_swing_leg_coverage_buf / self.dt
 
     def _reward_stumble(self):
         # Penalize feet hitting vertical surfaces
@@ -1613,8 +1999,7 @@ class LeggedRobot(BaseTask):
         return torch.sum(torch.square(self.dof_pos - self.default_dof_pos), dim=1) * self._stand_command_mask().float()
 
     def _reward_feet_contact_still(self):
-        contact = self.contact_forces[:, self.feet_indices, 2] > self.cfg.rewards.still_contact_force_threshold
-        missing_contacts = torch.sum((~contact).float(), dim=1)
+        missing_contacts = torch.sum((~self.valid_foot_contacts).float(), dim=1)
         return missing_contacts * self._stand_command_mask().float()
 
     def _reward_still_base_vel(self):
@@ -1628,14 +2013,18 @@ class LeggedRobot(BaseTask):
         return torch.sum(torch.square(self.actions), dim=1) * self._stand_command_mask().float()
 
     def _reward_crawl_feet_contact(self):
-        contact = self.contact_forces[:, self.feet_indices, 2] > self.cfg.rewards.still_contact_force_threshold
-        missing_contacts = torch.sum((~contact).float(), dim=1)
+        missing_contacts = torch.sum((~self.valid_foot_contacts).float(), dim=1)
         return missing_contacts * self._crawl_command_mask().float()
 
+    def _reward_crawl_min_contacts(self):
+        contact_count = torch.sum(self.valid_foot_contacts.float(), dim=1)
+        missing_support = torch.relu(self.cfg.rewards.crawl_min_contacts - contact_count)
+        return missing_support * self._crawl_command_mask().float()
+
     def _reward_crawl_foot_slip(self):
-        contact = self.contact_forces[:, self.feet_indices, 2] > self.cfg.rewards.still_contact_force_threshold
-        foot_xy_vel = torch.norm(self.foot_velocities[:, :, :2], dim=2)
-        return torch.sum(foot_xy_vel * contact.float(), dim=1) * self._crawl_command_mask().float()
+        foot_xy_speed_sq = torch.sum(torch.square(self.virtual_foot_velocities[:, :, :2]), dim=2)
+        slip = torch.sum(foot_xy_speed_sq * self.valid_foot_contacts.float(), dim=1)
+        return slip * self._crawl_command_mask().float()
 
     def _reward_crawl_base_vel(self):
         lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
@@ -1655,6 +2044,22 @@ class LeggedRobot(BaseTask):
         base_height = torch.mean(self.root_states[:, 2].unsqueeze(1) - self.measured_heights, dim=1)
         low_height = torch.relu(self.cfg.rewards.crawl_base_height_target - base_height)
         return torch.square(low_height) * self._crawl_command_mask().float()
+
+    def _reward_crawl_swing_clearance(self):
+        swing = (~self.valid_foot_contacts).float()
+        target_error = torch.square(
+            self.virtual_foot_clearances - self.cfg.rewards.crawl_swing_height_target)
+        excess_height = torch.square(torch.relu(
+            self.virtual_foot_clearances - self.cfg.rewards.crawl_max_swing_height))
+        return torch.sum((target_error + excess_height) * swing, dim=1) * self._crawl_command_mask().float()
+
+    def _reward_crawl_excess_air_time(self):
+        excess_air_time = torch.square(torch.relu(
+            self.feet_air_time - self.cfg.rewards.crawl_max_air_time))
+        return torch.sum(excess_air_time, dim=1) * self._crawl_command_mask().float()
+
+    def _reward_illegal_calf_contact(self):
+        return torch.sum(self.illegal_calf_contacts.float(), dim=1)
 
     def _reward_feet_contact_forces(self):
         # penalize high contact forces
