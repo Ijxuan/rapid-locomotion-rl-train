@@ -2,10 +2,13 @@ from typing import Union
 
 from params_proto.neo_proto import Meta
 
+from mini_gym.envs.base.paper_b_defaults import apply_paper_b_mini_cheetah_defaults
 from mini_gym.envs.base.legged_robot_config import Cfg
 
 
 def config_mini_cheetah(Cnfg: Union[Cfg, Meta]):
+    apply_paper_b_mini_cheetah_defaults(Cnfg)
+
     _ = Cnfg.init_state
 
     _.pos = [0.0, 0.0, 0.32]  # x,y,z [m]
@@ -28,11 +31,11 @@ def config_mini_cheetah(Cnfg: Union[Cfg, Meta]):
 
     _ = Cnfg.control
     _.control_type = 'P'
-    _.stiffness = {'joint': 20.}  # [N*m/rad]
-    _.damping = {'joint': 0.5}  # [N*m*s/rad]
+    _.stiffness = {'joint': 17.}  # [N*m/rad]
+    _.damping = {'joint': 0.4}  # [N*m*s/rad]
     # action scale: target angle = actionScale * action + defaultAngle
-    _.action_scale = 0.25
-    _.hip_scale_reduction = 0.5
+    _.action_scale = 0.1
+    _.hip_scale_reduction = 1.0
     # decimation: Number of control action updates @ sim DT per policy DT
     _.decimation = 4
 
@@ -66,9 +69,13 @@ def config_mini_cheetah(Cnfg: Union[Cfg, Meta]):
     _.curriculum = False
 
     _ = Cnfg.env
-    _.num_observations = 42
+    _.num_observations = 142
+    _.num_privileged_obs = 11
+    _.estimator_output_dim = 11
+    _.num_observation_history = 1
+    _.use_paper_b_observation = True
     _.observe_vel = False
-    _.num_envs = 4000
+    _.num_envs = 800
 
     _ = Cnfg.commands
     _.lin_vel_x = [-1.0, 1.0]
@@ -78,28 +85,41 @@ def config_mini_cheetah(Cnfg: Union[Cfg, Meta]):
     _.heading_command = False
     _.resampling_time = 10.0
     _.command_curriculum = True
+    _.paper_b_command_curriculum = True
     _.num_lin_vel_bins = 30
     _.num_ang_vel_bins = 30
-    _.lin_vel_x = [-0.6, 0.6]
-    _.lin_vel_y = [-0.6, 0.6]
-    _.ang_vel_yaw = [-1, 1]
+    _.num_commands = 3
+    _.lin_vel_x = [-0.5, 1.0]
+    _.lin_vel_y = [-1.0, 1.0]
+    _.ang_vel_yaw = [-1.0, 1.0]
+    _.paper_b_vx_initial = [-0.5, 1.0]
+    _.paper_b_vx_final = [-1.75, 3.5]
+    _.zero_command_probability = 0.1
 
     _ = Cnfg.domain_rand
-    _.randomize_base_mass = True
+    _.randomize_base_mass = False
     _.added_mass_range = [-1, 3]
     _.push_robots = False
     _.max_push_vel_xy = 0.5
     _.randomize_friction = True
-    _.friction_range = [0.05, 4.5]
-    _.randomize_restitution = True
+    _.friction_range = [0.4, 1.0]
+    _.randomize_restitution = False
     _.restitution_range = [0.0, 1.0]
     _.restitution = 0.5  # default terrain restitution
-    _.randomize_com_displacement = True
+    _.randomize_com_displacement = False
     _.com_displacement_range = [-0.1, 0.1]
-    _.randomize_motor_strength = True
+    _.randomize_motor_strength = False
     _.motor_strength_range = [0.9, 1.1]
     _.randomize_Kp_factor = False
     _.Kp_factor_range = [0.8, 1.3]
     _.randomize_Kd_factor = False
     _.Kd_factor_range = [0.5, 1.5]
+    _.randomize_motor_friction = True
+    _.motor_friction_haa_hfe_range = [0.0, 0.3]
+    _.motor_friction_kfe_range = [0.1, 0.7]
+    _.randomize_pd_gains = True
+    _.Kp_noise_range = [-2.0, 2.0]
+    _.Kd_noise_range = [-0.1, 0.1]
+    _.randomize_foot_radius = True
+    _.foot_radius_range = [0.006, 0.010]
     _.rand_interval_s = 6
