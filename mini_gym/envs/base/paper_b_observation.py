@@ -72,6 +72,34 @@ def layout_width(slices: Mapping[str, slice]) -> int:
     return max(part.stop for part in slices.values())
 
 
+def observation_components(
+    base_quat,
+    base_ang_vel,
+    dof_pos,
+    dof_vel,
+    previous_desired_joint_positions,
+    joint_position_error_history,
+    joint_velocity_history,
+    foot_positions_body,
+    commands,
+):
+    return (
+        base_quat,
+        base_ang_vel,
+        dof_pos,
+        dof_vel,
+        previous_desired_joint_positions,
+        joint_position_error_history,
+        joint_velocity_history,
+        foot_positions_body,
+        commands,
+    )
+
+
+def estimator_target_components(base_lin_vel, foot_height, contact_probability):
+    return base_lin_vel, foot_height, contact_probability
+
+
 def action_to_desired_joint_positions(action, nominal_joint_positions):
     """Paper B action mapping: q_des = q_nominal + 0.1 * action."""
     return nominal_joint_positions + PAPER_B_ACTION_SCALE * action

@@ -49,6 +49,13 @@ def apply_paper_b_common_defaults(cfg):
     cfg.rewards.paper_b_airtime_clip = 0.3
     cfg.rewards.paper_b_airtime_max = 0.25
     cfg.rewards.paper_b_airtime_cap = 0.2
+    for reward_name in (
+        "lin_vel_z", "ang_vel_xy", "base_height", "collision", "feet_stumble", "action_rate", "stand_still",
+        "dof_pos_limits", "dof_vel_limits", "torque_limits", "tracking_lin_vel_lat", "tracking_lin_vel_long",
+        "feet_contact_forces",
+    ):
+        if hasattr(cfg.rewards.scales, reward_name):
+            setattr(cfg.rewards.scales, reward_name, 0.0)
     cfg.rewards.scales.tracking_lin_vel = 3.0
     cfg.rewards.scales.tracking_ang_vel = 3.0
     cfg.rewards.scales.feet_air_time = 0.3

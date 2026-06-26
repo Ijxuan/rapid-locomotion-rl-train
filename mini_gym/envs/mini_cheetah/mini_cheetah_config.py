@@ -53,10 +53,10 @@ def config_mini_cheetah(Cnfg: Union[Cfg, Meta]):
     _.base_height_target = 0.30
 
     _ = Cnfg.rewards.scales
-    _.torques = -0.0002
-    _.dof_pos_limits = -10.0
-    _.orientation = -5.
-    _.base_height = -30.
+    _.torques = -6e-4
+    _.dof_pos_limits = 0.0
+    _.orientation = -3.0
+    _.base_height = 0.0
 
     _ = Cnfg.terrain
     _.mesh_type = 'trimesh'

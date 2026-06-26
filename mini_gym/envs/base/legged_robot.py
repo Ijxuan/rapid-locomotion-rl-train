@@ -13,6 +13,13 @@ from mini_gym import MINI_GYM_ROOT_DIR
 from mini_gym.envs.base.base_task import BaseTask
 from mini_gym.utils.math_utils import quat_apply_yaw, wrap_to_pi, get_scale_shift
 from mini_gym.utils.terrain import Terrain
+from .paper_b_observation import (
+    ACTION_HISTORY_STEPS,
+    JOINT_HISTORY_STEPS,
+    PAPER_B_JOINT_HISTORY_DT,
+    estimator_target_components,
+    observation_components,
+)
 from .legged_robot_config import Cfg
 
 
@@ -118,6 +125,8 @@ class LeggedRobot(BaseTask):
             # if self.device == 'cpu':
             self.gym.fetch_results(self.sim, True)
             self.gym.refresh_dof_state_tensor(self.sim)
+        if self.cfg.env.use_paper_b_observation:
+            self._update_paper_b_desired_joint_history()
         self.post_physics_step()
 
         # return clipped obs, clipped states (None), rewards, dones and infos
@@ -234,6 +243,8 @@ class LeggedRobot(BaseTask):
         self.last_actions[env_ids] = 0.
         self.last_dof_vel[env_ids] = 0.
         self.feet_air_time[env_ids] = 0.
+        if self.cfg.env.use_paper_b_observation:
+            self._reset_paper_b_history_buffers(env_ids)
         self.episode_length_buf[env_ids] = 0
         self.reset_buf[env_ids] = 1
         # fill extras
@@ -321,6 +332,10 @@ class LeggedRobot(BaseTask):
     def compute_observations(self):
         """ Computes observations
         """
+        if self.cfg.env.use_paper_b_observation:
+            self._compute_paper_b_observations()
+            return
+
         self.obs_buf = torch.cat((self.projected_gravity,
                                   (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,
                                   self.dof_vel * self.obs_scales.dof_vel,
@@ -393,6 +408,75 @@ class LeggedRobot(BaseTask):
              (self.com_displacements - com_displacements_shift) * com_displacements_scale,  # payload
              (self.motor_strengths - motor_strengths_shift) * motor_strengths_scale,  # motor strength
              ), dim=1)
+
+    def _compute_paper_b_observations(self):
+        self._update_paper_b_joint_state_history()
+        foot_positions_body = self._get_foot_positions_body()
+        foot_positions_body_obs = self._add_paper_b_foot_position_noise(foot_positions_body)
+
+        joint_error_history, joint_velocity_history = self._get_paper_b_sparse_joint_history()
+        previous_desired_joint_positions = self.paper_b_desired_joint_pos_history.reshape(self.num_envs, -1)
+
+        self.obs_buf = torch.cat(observation_components(
+            self.base_quat,
+            self.base_ang_vel,
+            self.dof_pos,
+            self.dof_vel,
+            previous_desired_joint_positions,
+            joint_error_history,
+            joint_velocity_history,
+            foot_positions_body_obs.reshape(self.num_envs, -1),
+            self.commands[:, :3],
+        ), dim=-1)
+
+        contact_probability = (self.contact_forces[:, self.feet_indices, 2] > 1.).float()
+        foot_height = self.paper_b_foot_positions_world[:, :, 2]
+        self.privileged_obs_buf = torch.cat(estimator_target_components(
+            self.base_lin_vel,
+            foot_height,
+            contact_probability,
+        ), dim=-1)
+
+    def _get_foot_positions_body(self):
+        foot_positions_world = self.rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.feet_indices, 0:3]
+        self.paper_b_foot_positions_world[:] = foot_positions_world
+        relative_foot_positions = foot_positions_world - self.root_states[:, None, 0:3]
+        flat_relative_positions = relative_foot_positions.reshape(-1, 3)
+        flat_base_quat = self.base_quat.repeat_interleave(len(self.feet_indices), dim=0)
+        foot_positions_body = quat_rotate_inverse(flat_base_quat, flat_relative_positions)
+        foot_positions_body = foot_positions_body.reshape(self.num_envs, len(self.feet_indices), 3)
+        self.paper_b_foot_positions_body[:] = foot_positions_body
+        return foot_positions_body
+
+    def _add_paper_b_foot_position_noise(self, foot_positions_body):
+        if not self.add_noise:
+            return foot_positions_body
+        low, high = self.cfg.domain_rand.obs_noise_foot_pos
+        noise = torch.rand_like(foot_positions_body) * (high - low) + low
+        return foot_positions_body + noise
+
+    def _update_paper_b_desired_joint_history(self):
+        if not hasattr(self, "paper_b_desired_joint_pos_history"):
+            return
+        desired_joint_positions = getattr(self, "joint_pos_target", self.default_dof_pos).detach()
+        self.paper_b_desired_joint_pos_history[:, 1:, :] = self.paper_b_desired_joint_pos_history[:, :-1, :].clone()
+        self.paper_b_desired_joint_pos_history[:, 0, :] = desired_joint_positions
+
+    def _update_paper_b_joint_state_history(self):
+        current_joint_error = self.dof_pos - self.default_dof_pos
+        self.paper_b_joint_error_delay_line[:, :-1, :] = self.paper_b_joint_error_delay_line[:, 1:, :].clone()
+        self.paper_b_joint_error_delay_line[:, -1, :] = current_joint_error
+        self.paper_b_joint_velocity_delay_line[:, :-1, :] = self.paper_b_joint_velocity_delay_line[:, 1:, :].clone()
+        self.paper_b_joint_velocity_delay_line[:, -1, :] = self.dof_vel
+
+    def _get_paper_b_sparse_joint_history(self):
+        indices = [
+            self.paper_b_joint_history_delay_steps - step * self.paper_b_joint_history_interval_steps
+            for step in range(1, JOINT_HISTORY_STEPS + 1)
+        ]
+        joint_error_history = self.paper_b_joint_error_delay_line[:, indices, :].reshape(self.num_envs, -1)
+        joint_velocity_history = self.paper_b_joint_velocity_delay_line[:, indices, :].reshape(self.num_envs, -1)
+        return joint_error_history, joint_velocity_history
 
     def create_sim(self):
         """ Creates simulation, terrain and evironments
@@ -859,6 +943,9 @@ class LeggedRobot(BaseTask):
             [torch.Tensor]: Vector of scales used to multiply a uniform distribution in [-1, 1]
         """
         self.add_noise = self.cfg.noise.add_noise
+        if self.cfg.env.use_paper_b_observation:
+            return torch.zeros(cfg.env.num_observations, device=self.device)
+
         noise_scales = self.cfg.noise.noise_scales
         noise_level = self.cfg.noise.noise_level
         noise_vec = torch.cat((torch.ones(3) * noise_scales.gravity * noise_level,
@@ -986,6 +1073,42 @@ class LeggedRobot(BaseTask):
                 if self.cfg.control.control_type in ["P", "V"]:
                     print(f"PD gain of joint {name} were not defined, setting them to zero")
         self.default_dof_pos = self.default_dof_pos.unsqueeze(0)
+        if self.cfg.env.use_paper_b_observation:
+            self._init_paper_b_buffers()
+
+    def _init_paper_b_buffers(self):
+        self.paper_b_joint_history_interval_steps = max(1, int(round(PAPER_B_JOINT_HISTORY_DT / self.dt)))
+        self.paper_b_joint_history_delay_steps = self.paper_b_joint_history_interval_steps * JOINT_HISTORY_STEPS
+        joint_history_buffer_steps = self.paper_b_joint_history_delay_steps + 1
+
+        self.paper_b_desired_joint_pos_history = torch.zeros(
+            self.num_envs, ACTION_HISTORY_STEPS, self.num_dof, dtype=torch.float, device=self.device,
+            requires_grad=False)
+        self.paper_b_joint_error_delay_line = torch.zeros(
+            self.num_envs, joint_history_buffer_steps, self.num_dof, dtype=torch.float, device=self.device,
+            requires_grad=False)
+        self.paper_b_joint_velocity_delay_line = torch.zeros_like(self.paper_b_joint_error_delay_line)
+        self.paper_b_foot_positions_world = torch.zeros(
+            self.num_envs, len(self.feet_indices), 3, dtype=torch.float, device=self.device, requires_grad=False)
+        self.paper_b_foot_positions_body = torch.zeros_like(self.paper_b_foot_positions_world)
+
+        self._reset_paper_b_history_buffers(torch.arange(self.num_envs, device=self.device))
+
+    def _reset_paper_b_history_buffers(self, env_ids):
+        if len(env_ids) == 0 or not hasattr(self, "paper_b_desired_joint_pos_history"):
+            return
+        nominal_joint_positions = self.default_dof_pos.expand(len(env_ids), -1)
+        self.paper_b_desired_joint_pos_history[env_ids] = nominal_joint_positions[:, None, :].repeat(
+            1, ACTION_HISTORY_STEPS, 1)
+
+        joint_error = self.dof_pos[env_ids] - self.default_dof_pos
+        self.paper_b_joint_error_delay_line[env_ids] = joint_error[:, None, :].repeat(
+            1, self.paper_b_joint_error_delay_line.shape[1], 1)
+        self.paper_b_joint_velocity_delay_line[env_ids] = self.dof_vel[env_ids].unsqueeze(1).repeat(
+            1, self.paper_b_joint_velocity_delay_line.shape[1], 1)
+
+        self.paper_b_foot_positions_world[env_ids] = 0.
+        self.paper_b_foot_positions_body[env_ids] = 0.
 
     def _init_custom_buffers__(self):
         # domain randomization properties
@@ -1448,6 +1571,18 @@ class LeggedRobot(BaseTask):
         # Penalize torques
         return torch.sum(torch.square(self.torques), dim=1)
 
+    def _reward_feet_slip(self):
+        contact = (self.contact_forces[:, self.feet_indices, 2] > 1.).float()
+        return torch.sum(contact * torch.sum(torch.square(self.foot_velocities[:, :, :2]), dim=-1), dim=1)
+
+    def _reward_feet_clearance(self):
+        if not hasattr(self, "paper_b_foot_positions_world"):
+            return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+        desired_height = self.cfg.rewards.paper_b_desired_foot_height
+        foot_speed_xy = torch.norm(self.foot_velocities[:, :, :2], dim=-1)
+        clearance_error = torch.square(self.paper_b_foot_positions_world[:, :, 2] - desired_height)
+        return torch.sum(clearance_error * torch.sqrt(foot_speed_xy + 1e-6), dim=1)
+
     def _reward_energy(self):
         # Penalize torques
         return torch.sum(torch.multiply(self.torques, self.dof_vel), dim=1)
@@ -1460,6 +1595,9 @@ class LeggedRobot(BaseTask):
         # Penalize dof velocities
         return torch.sum(torch.square(self.dof_vel), dim=1)
 
+    def _reward_dof_pos(self):
+        return torch.sum(torch.square(self.dof_pos - self.default_dof_pos), dim=1)
+
     def _reward_dof_acc(self):
         # Penalize dof accelerations
         return torch.sum(torch.square((self.last_dof_vel - self.dof_vel) / self.dt), dim=1)
@@ -1467,6 +1605,19 @@ class LeggedRobot(BaseTask):
     def _reward_action_rate(self):
         # Penalize changes in actions
         return torch.sum(torch.square(self.last_actions - self.actions), dim=1)
+
+    def _reward_action_smoothness_1(self):
+        if not hasattr(self, "paper_b_desired_joint_pos_history"):
+            return self._reward_action_rate()
+        return torch.sum(torch.square(
+            self.paper_b_desired_joint_pos_history[:, 0, :] - self.paper_b_desired_joint_pos_history[:, 1, :]), dim=1)
+
+    def _reward_action_smoothness_2(self):
+        return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+
+    def _reward_base_motion(self):
+        return 0.8 * torch.square(self.base_lin_vel[:, 2]) + 0.2 * torch.abs(self.base_ang_vel[:, 0]) + 0.2 * torch.abs(
+            self.base_ang_vel[:, 1])
 
     def _reward_collision(self):
         # Penalize collisions on selected bodies

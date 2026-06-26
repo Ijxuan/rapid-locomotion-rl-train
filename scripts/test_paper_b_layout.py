@@ -16,7 +16,9 @@ from mini_gym.envs.base.paper_b_observation import (
     PAPER_B_KD,
     PAPER_B_KP,
     action_to_desired_joint_positions,
+    estimator_target_components,
     layout_width,
+    observation_components,
 )
 
 
@@ -57,6 +59,42 @@ class PaperBLayoutTest(unittest.TestCase):
         action = np.ones(ACTION_DIM, dtype=np.float32)
         desired = action_to_desired_joint_positions(action, nominal)
         np.testing.assert_allclose(desired, nominal + PAPER_B_ACTION_SCALE)
+
+    def test_observation_components_concatenate_to_paper_b_layout(self):
+        parts = observation_components(
+            np.full((2, 4), 1.0, dtype=np.float32),
+            np.full((2, 3), 2.0, dtype=np.float32),
+            np.full((2, 12), 3.0, dtype=np.float32),
+            np.full((2, 12), 4.0, dtype=np.float32),
+            np.full((2, 24), 5.0, dtype=np.float32),
+            np.full((2, 36), 6.0, dtype=np.float32),
+            np.full((2, 36), 7.0, dtype=np.float32),
+            np.full((2, 12), 8.0, dtype=np.float32),
+            np.full((2, 3), 9.0, dtype=np.float32),
+        )
+
+        obs = np.concatenate(parts, axis=-1)
+
+        self.assertEqual(obs.shape, (2, OBS_DIM))
+        np.testing.assert_allclose(obs[:, OBSERVATION_SLICES["base_quat"]], 1.0)
+        np.testing.assert_allclose(obs[:, OBSERVATION_SLICES["previous_desired_joint_positions"]], 5.0)
+        np.testing.assert_allclose(obs[:, OBSERVATION_SLICES["joint_position_error_history"]], 6.0)
+        np.testing.assert_allclose(obs[:, OBSERVATION_SLICES["foot_positions_body"]], 8.0)
+        np.testing.assert_allclose(obs[:, OBSERVATION_SLICES["commands"]], 9.0)
+
+    def test_estimator_target_components_concatenate_to_expected_layout(self):
+        parts = estimator_target_components(
+            np.full((2, 3), 1.0, dtype=np.float32),
+            np.full((2, 4), 2.0, dtype=np.float32),
+            np.full((2, 4), 3.0, dtype=np.float32),
+        )
+
+        target = np.concatenate(parts, axis=-1)
+
+        self.assertEqual(target.shape, (2, ESTIMATOR_TARGET_DIM))
+        np.testing.assert_allclose(target[:, ESTIMATOR_TARGET_SLICES["base_lin_vel"]], 1.0)
+        np.testing.assert_allclose(target[:, ESTIMATOR_TARGET_SLICES["foot_height"]], 2.0)
+        np.testing.assert_allclose(target[:, ESTIMATOR_TARGET_SLICES["contact_probability"]], 3.0)
 
     def test_common_defaults_apply_paper_b_training_shape(self):
         cfg = fake_cfg()
