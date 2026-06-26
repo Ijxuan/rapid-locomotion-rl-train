@@ -4,7 +4,6 @@ import os
 from typing import Dict
 
 from isaacgym import gymtorch, gymapi, gymutil
-from isaacgym.torch_utils import *
 
 assert gymtorch
 import torch
@@ -12,6 +11,7 @@ import torch
 from mini_gym import MINI_GYM_ROOT_DIR
 from mini_gym.envs.base.base_task import BaseTask
 from mini_gym.utils.math_utils import quat_apply_yaw, wrap_to_pi, get_scale_shift
+from mini_gym.utils.torch_utils import *
 from mini_gym.utils.terrain import Terrain
 from .paper_b_observation import (
     ACTION_HISTORY_STEPS,
