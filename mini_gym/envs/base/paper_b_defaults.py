@@ -99,7 +99,9 @@ def apply_paper_b_common_defaults(cfg):
     cfg.init_state.noise_ang_vel = [-0.7, 0.7]
 
     if hasattr(cfg, "asset"):
-        cfg.asset.terminate_after_contacts_on = ["base"]
+        cfg.asset.terminate_after_contacts_on = ["base", "trunk"]
+        cfg.asset.foot_name = "_foot"
+        cfg.asset.collapse_fixed_joints = False
 
 
 def apply_paper_b_mini_cheetah_defaults(cfg):

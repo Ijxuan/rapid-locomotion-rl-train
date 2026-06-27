@@ -31,6 +31,7 @@ def fake_cfg():
         rewards=SimpleNamespace(scales=SimpleNamespace()),
         domain_rand=SimpleNamespace(),
         init_state=SimpleNamespace(),
+        asset=SimpleNamespace(),
     )
 
 
@@ -127,6 +128,9 @@ class PaperBLayoutTest(unittest.TestCase):
         self.assertEqual(cfg.domain_rand.friction_range, [0.4, 1.0])
         self.assertEqual(cfg.domain_rand.motor_friction_haa_hfe_range, [0.0, 0.3])
         self.assertEqual(cfg.domain_rand.motor_friction_kfe_range, [0.1, 0.7])
+        self.assertEqual(cfg.asset.foot_name, "_foot")
+        self.assertEqual(cfg.asset.terminate_after_contacts_on, ["base", "trunk"])
+        self.assertFalse(cfg.asset.collapse_fixed_joints)
 
 
 if __name__ == "__main__":
