@@ -19,11 +19,15 @@ Remote Isaac Gym smoke sequence:
 ```bash
 git checkout paper-b-reproduction
 git pull
-# Batch 2: create 8 envs, reset, check obs=(8, 142), privileged=(8, 11), finite.
-# Batch 3: run 2 PPO iterations, check estimator_loss/value/surrogate logs.
-# Batch 4: run 5 env steps, check finite reward/reset/terminal penalty.
-# Batch 5: run 1-2 short iterations, check zero-command ratio and DR buffers.
-# Batch 6: run train/play/deploy checkpoint load smoke, check estimator/body JIT paths.
+
+python scripts/paper_b_remote_smoke.py --check env --num-envs 8
+python scripts/paper_b_remote_smoke.py --check steps --num-envs 8 --steps 5
+python scripts/paper_b_remote_smoke.py --check command-dr --num-envs 20 --command-resamples 20
+python scripts/paper_b_remote_smoke.py --check ppo --num-envs 8 --ppo-iters 2 --steps-per-iter 4
+python scripts/paper_b_remote_smoke.py --check jit
+
+# Or run the full smoke suite in one command:
+python scripts/paper_b_remote_smoke.py --check all --num-envs 8
 ```
 
 # Code for Rapid Locomotion via Reinforcement Learning
