@@ -119,6 +119,7 @@ class PaperBLayoutTest(unittest.TestCase):
         self.assertEqual(cfg.commands.zero_command_probability, 0.1)
 
         self.assertTrue(cfg.rewards.use_paper_b_reward)
+        self.assertFalse(cfg.rewards.only_positive_rewards)
         self.assertEqual(cfg.rewards.scales.tracking_lin_vel, 3.0)
         self.assertEqual(cfg.rewards.scales.feet_clearance, -15.0)
         self.assertEqual(cfg.rewards.paper_b_termination_penalty, -10.0)

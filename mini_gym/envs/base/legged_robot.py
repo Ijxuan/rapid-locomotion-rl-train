@@ -13,6 +13,12 @@ from mini_gym.envs.base.base_task import BaseTask
 from mini_gym.utils.math_utils import quat_apply_yaw, wrap_to_pi, get_scale_shift
 from mini_gym.utils.torch_utils import *
 from mini_gym.utils.terrain import Terrain
+from .paper_b_rewards import (
+    PAPER_B_NEGATIVE_REWARDS,
+    PAPER_B_POSITIVE_REWARDS,
+    paper_b_airtime_piecewise,
+    paper_b_total_reward,
+)
 from .paper_b_observation import (
     ACTION_HISTORY_STEPS,
     JOINT_HISTORY_STEPS,
@@ -169,6 +175,7 @@ class LeggedRobot(BaseTask):
         self.reset_idx(env_ids)
         self.compute_observations()
 
+        self.last_last_actions[:] = self.last_actions[:]
         self.last_actions[:] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
         self.last_root_vel[:] = self.root_states[:, 7:13]
@@ -240,9 +247,11 @@ class LeggedRobot(BaseTask):
         self._call_train_eval(self._reset_root_states, env_ids)
 
         # reset buffersew
+        self.last_last_actions[env_ids] = 0.
         self.last_actions[env_ids] = 0.
         self.last_dof_vel[env_ids] = 0.
         self.feet_air_time[env_ids] = 0.
+        self.last_contacts[env_ids] = False
         if self.cfg.env.use_paper_b_observation:
             self._reset_paper_b_history_buffers(env_ids)
         self.episode_length_buf[env_ids] = 0
@@ -306,6 +315,10 @@ class LeggedRobot(BaseTask):
             Calls each reward function which had a non-zero scale (processed in self._prepare_reward_function())
             adds each terms to the episode sums and to the total reward
         """
+        if self.cfg.rewards.use_paper_b_reward:
+            self._compute_paper_b_reward()
+            return
+
         self.rew_buf[:] = 0.
         for i in range(len(self.reward_functions)):
             name = self.reward_names[i]
@@ -323,6 +336,43 @@ class LeggedRobot(BaseTask):
             self.episode_sums["termination"] += rew
             self.command_sums["termination"] += rew
 
+        self.command_sums["lin_vel_raw"] += self.base_lin_vel[:, 0]
+        self.command_sums["ang_vel_raw"] += self.base_ang_vel[:, 2]
+        self.command_sums["lin_vel_residual"] += (self.base_lin_vel[:, 0] - self.commands[:, 0]) ** 2
+        self.command_sums["ang_vel_residual"] += (self.base_ang_vel[:, 2] - self.commands[:, 2]) ** 2
+        self.command_sums["ep_timesteps"] += 1
+
+    def _compute_paper_b_reward(self):
+        positive_reward = torch.zeros_like(self.rew_buf)
+        negative_reward = torch.zeros_like(self.rew_buf)
+
+        for i in range(len(self.reward_functions)):
+            name = self.reward_names[i]
+            rew = self.reward_functions[i]() * self.reward_scales[name]
+            if name in PAPER_B_POSITIVE_REWARDS:
+                positive_reward += rew
+            elif name in PAPER_B_NEGATIVE_REWARDS:
+                negative_reward += rew
+            elif self.reward_scales[name] >= 0.0:
+                positive_reward += rew
+            else:
+                negative_reward += rew
+            self.episode_sums[name] += rew
+            self.command_sums[name] += rew
+
+        self.rew_buf[:] = paper_b_total_reward(
+            positive_reward,
+            negative_reward,
+            self.cfg.rewards.paper_b_reward_exponential_scale,
+        )
+
+        if "termination" in self.reward_scales:
+            termination_penalty = self._reward_termination() * self.cfg.rewards.paper_b_termination_penalty
+            self.rew_buf += termination_penalty
+            self.episode_sums["termination"] += termination_penalty
+            self.command_sums["termination"] += termination_penalty
+
+        self.episode_sums["total"] += self.rew_buf
         self.command_sums["lin_vel_raw"] += self.base_lin_vel[:, 0]
         self.command_sums["ang_vel_raw"] += self.base_ang_vel[:, 2]
         self.command_sums["lin_vel_residual"] += (self.base_lin_vel[:, 0] - self.commands[:, 0]) ** 2
@@ -1035,6 +1085,8 @@ class LeggedRobot(BaseTask):
         self.d_gains = torch.zeros(self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
         self.actions = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device,
                                    requires_grad=False)
+        self.last_last_actions = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device,
+                                             requires_grad=False)
         self.last_actions = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device,
                                         requires_grad=False)
         self.last_dof_vel = torch.zeros_like(self.dof_vel)
@@ -1161,7 +1213,7 @@ class LeggedRobot(BaseTask):
             scale = self.reward_scales[key]
             if scale == 0:
                 self.reward_scales.pop(key)
-            else:
+            elif not self.cfg.rewards.use_paper_b_reward:
                 self.reward_scales[key] *= self.dt
         # prepare list of functions
         self.reward_functions = []
@@ -1560,6 +1612,9 @@ class LeggedRobot(BaseTask):
 
     def _reward_orientation(self):
         # Penalize non flat base orientation
+        if self.cfg.rewards.use_paper_b_reward:
+            body_z_world_angle = torch.acos(torch.clamp(-self.projected_gravity[:, 2], -1.0, 1.0))
+            return torch.square(body_z_world_angle)
         return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1)
 
     def _reward_base_height(self):
@@ -1578,6 +1633,7 @@ class LeggedRobot(BaseTask):
     def _reward_feet_clearance(self):
         if not hasattr(self, "paper_b_foot_positions_world"):
             return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+        self._get_foot_positions_body()
         desired_height = self.cfg.rewards.paper_b_desired_foot_height
         foot_speed_xy = torch.norm(self.foot_velocities[:, :, :2], dim=-1)
         clearance_error = torch.square(self.paper_b_foot_positions_world[:, :, 2] - desired_height)
@@ -1600,6 +1656,8 @@ class LeggedRobot(BaseTask):
 
     def _reward_dof_acc(self):
         # Penalize dof accelerations
+        if self.cfg.rewards.use_paper_b_reward:
+            return torch.sum(torch.square(self.last_dof_vel - self.dof_vel), dim=1)
         return torch.sum(torch.square((self.last_dof_vel - self.dof_vel) / self.dt), dim=1)
 
     def _reward_action_rate(self):
@@ -1607,13 +1665,10 @@ class LeggedRobot(BaseTask):
         return torch.sum(torch.square(self.last_actions - self.actions), dim=1)
 
     def _reward_action_smoothness_1(self):
-        if not hasattr(self, "paper_b_desired_joint_pos_history"):
-            return self._reward_action_rate()
-        return torch.sum(torch.square(
-            self.paper_b_desired_joint_pos_history[:, 0, :] - self.paper_b_desired_joint_pos_history[:, 1, :]), dim=1)
+        return torch.sum(torch.square(self.actions - self.last_actions), dim=1)
 
     def _reward_action_smoothness_2(self):
-        return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+        return torch.sum(torch.square(self.actions - 2.0 * self.last_actions + self.last_last_actions), dim=1)
 
     def _reward_base_motion(self):
         return 0.8 * torch.square(self.base_lin_vel[:, 2]) + 0.2 * torch.abs(self.base_ang_vel[:, 0]) + 0.2 * torch.abs(
@@ -1656,6 +1711,8 @@ class LeggedRobot(BaseTask):
             lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.root_states[:, 7:9]), dim=1)
         else:
             lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
+        if self.cfg.rewards.use_paper_b_reward:
+            return torch.exp(-lin_vel_error)
         return torch.exp(-lin_vel_error / self.cfg.rewards.tracking_sigma)
 
     # def _reward_tracking_lin_vel_long(self):
@@ -1689,6 +1746,8 @@ class LeggedRobot(BaseTask):
     def _reward_tracking_ang_vel(self):
         # Tracking of angular velocity commands (yaw) 
         ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
+        if self.cfg.rewards.use_paper_b_reward:
+            return torch.exp(-1.5 * ang_vel_error)
         return torch.exp(-ang_vel_error / self.cfg.rewards.tracking_sigma_yaw)
 
     def _reward_feet_air_time(self):
@@ -1699,9 +1758,24 @@ class LeggedRobot(BaseTask):
         self.last_contacts = contact
         first_contact = (self.feet_air_time > 0.) * contact_filt
         self.feet_air_time += self.dt
-        rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact,
-                                dim=1)  # reward only on first contact with the ground
-        rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1  # no reward for zero command
+        if self.cfg.rewards.use_paper_b_reward:
+            command_norm = torch.norm(self.commands[:, :2], dim=1)
+            reward_per_foot = paper_b_airtime_piecewise(
+                self.feet_air_time,
+                first_contact,
+                contact_filt,
+                command_norm,
+                self.cfg.rewards.paper_b_stance_command_threshold,
+                self.cfg.rewards.paper_b_airtime_clip,
+                self.cfg.rewards.paper_b_airtime_max,
+                self.cfg.rewards.paper_b_airtime_cap,
+                self.dt,
+            )
+            rew_airTime = torch.sum(reward_per_foot, dim=1)
+        else:
+            rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact,
+                                    dim=1)  # reward only on first contact with the ground
+            rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1  # no reward for zero command
         self.feet_air_time *= ~contact_filt
         return rew_airTime
 

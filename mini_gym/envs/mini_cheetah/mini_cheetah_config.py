@@ -43,7 +43,7 @@ def config_mini_cheetah(Cnfg: Union[Cfg, Meta]):
     _.file = '{MINI_GYM_ROOT_DIR}/resources/robots/mini_cheetah/urdf/mini_cheetah.urdf'
     _.foot_name = "calf"
     _.penalize_contacts_on = []
-    _.terminate_after_contacts_on = ["base", "thigh"]
+    _.terminate_after_contacts_on = ["base"]
     _.self_collisions = 0  # 1 to disable, 0 to enable...bitwise filter
     _.flip_visual_attachments = False
     _.fix_base_link = False

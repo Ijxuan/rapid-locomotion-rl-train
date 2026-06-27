@@ -42,6 +42,7 @@ def apply_paper_b_common_defaults(cfg):
     cfg.commands.zero_command_probability = 0.1
 
     cfg.rewards.use_paper_b_reward = True
+    cfg.rewards.only_positive_rewards = False
     cfg.rewards.paper_b_reward_exponential_scale = 0.2
     cfg.rewards.paper_b_desired_foot_height = 0.09
     cfg.rewards.paper_b_termination_penalty = -10.0
@@ -96,6 +97,9 @@ def apply_paper_b_common_defaults(cfg):
     cfg.init_state.noise_lin_vel_x = [-1.0, 1.0]
     cfg.init_state.noise_lin_vel_yz = [-0.5, 0.5]
     cfg.init_state.noise_ang_vel = [-0.7, 0.7]
+
+    if hasattr(cfg, "asset"):
+        cfg.asset.terminate_after_contacts_on = ["base"]
 
 
 def apply_paper_b_mini_cheetah_defaults(cfg):
