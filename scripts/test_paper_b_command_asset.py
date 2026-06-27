@@ -1,6 +1,7 @@
 import unittest
+from pathlib import Path
 
-from mini_gym.envs.base.paper_b_assets import foot_radius_buckets
+from mini_gym.envs.base.paper_b_assets import foot_radius_buckets, foot_sphere_radius_from_urdf
 from mini_gym.envs.base.paper_b_commands import paper_b_vx_range
 
 
@@ -22,8 +23,14 @@ class PaperBCommandAssetTest(unittest.TestCase):
         self.assertAlmostEqual(buckets[-1], 0.010)
         self.assertAlmostEqual(buckets[2], 0.008)
 
+    def test_default_sphere_foot_radius_can_be_read_from_urdf(self):
+        root = Path(__file__).resolve().parents[1]
+        urdf = root / "resources/robots/mini_cheetah/urdf/mini_cheetah_simple.urdf"
+
+        self.assertAlmostEqual(foot_sphere_radius_from_urdf(urdf), 0.0175)
+
     def test_mini_cheetah_config_source_uses_sphere_foot_asset(self):
-        source = ((__import__("pathlib").Path(__file__).resolve().parents[1])
+        source = (Path(__file__).resolve().parents[1]
                   / "mini_gym/envs/mini_cheetah/mini_cheetah_config.py").read_text(encoding="utf-8")
 
         self.assertIn("mini_cheetah_simple.urdf", source)

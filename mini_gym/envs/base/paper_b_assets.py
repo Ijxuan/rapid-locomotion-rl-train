@@ -14,6 +14,23 @@ def foot_radius_buckets(radius_range, num_buckets=5):
     return [low + step * bucket_id for bucket_id in range(num_buckets)]
 
 
+def foot_sphere_radius_from_urdf(urdf_path, fallback=None):
+    tree = ElementTree.parse(urdf_path)
+    root = tree.getroot()
+
+    for link in root.findall("link"):
+        if not link.attrib.get("name", "").endswith("_foot"):
+            continue
+        for sphere in link.findall(".//sphere"):
+            radius = sphere.attrib.get("radius")
+            if radius is not None:
+                return float(radius)
+
+    if fallback is not None:
+        return float(fallback)
+    raise ValueError(f"could not find a _foot sphere radius in {urdf_path}")
+
+
 def generate_sphere_foot_urdf_variants(template_path, output_dir, radii):
     template_path = Path(template_path)
     output_dir = Path(output_dir)

@@ -13,7 +13,7 @@ from mini_gym.envs.base.base_task import BaseTask
 from mini_gym.utils.math_utils import quat_apply_yaw, wrap_to_pi, get_scale_shift
 from mini_gym.utils.torch_utils import *
 from mini_gym.utils.terrain import Terrain
-from .paper_b_assets import foot_radius_buckets, generate_sphere_foot_urdf_variants
+from .paper_b_assets import foot_radius_buckets, foot_sphere_radius_from_urdf, generate_sphere_foot_urdf_variants
 from .paper_b_commands import paper_b_vx_range
 from .paper_b_rewards import (
     PAPER_B_NEGATIVE_REWARDS,
@@ -1315,6 +1315,15 @@ class LeggedRobot(BaseTask):
     def _assign_paper_b_foot_geometry(self, env_ids):
         if len(env_ids) == 0:
             return
+        if not self.cfg.domain_rand.randomize_foot_radius:
+            radius = getattr(self, "paper_b_nominal_foot_radius", None)
+            if radius is None:
+                low, high = self.cfg.domain_rand.foot_radius_range
+                radius = 0.5 * (low + high)
+            self.paper_b_foot_radii[env_ids] = float(radius)
+            self.paper_b_foot_position_offsets[env_ids] = 0.
+            return
+
         radius_values = foot_radius_buckets(self.cfg.domain_rand.foot_radius_range)
         radii = torch.tensor(radius_values, dtype=torch.float, device=self.device)
         bucket_ids = env_ids % len(radius_values)
@@ -1472,6 +1481,9 @@ class LeggedRobot(BaseTask):
              3. Store indices of different bodies of the robot
         """
         asset_path = self.cfg.asset.file.format(MINI_GYM_ROOT_DIR=MINI_GYM_ROOT_DIR)
+        if self.cfg.env.use_paper_b_observation:
+            low, high = self.cfg.domain_rand.foot_radius_range
+            self.paper_b_nominal_foot_radius = foot_sphere_radius_from_urdf(asset_path, fallback=0.5 * (low + high))
 
         asset_options = gymapi.AssetOptions()
         asset_options.default_dof_drive_mode = self.cfg.asset.default_dof_drive_mode

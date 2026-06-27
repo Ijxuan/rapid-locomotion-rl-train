@@ -1,73 +1,124 @@
 import isaacgym
 
 assert isaacgym
-import torch
-import numpy as np
 
-from mini_gym.envs import *
+import glob
+import os
+import sys
+from pathlib import Path
+
+import numpy as np
+import torch
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from mini_gym import MINI_GYM_ROOT_DIR
+from mini_gym.envs import *  # noqa: F401,F403
 from mini_gym.envs.base.legged_robot_config import Cfg
 from mini_gym.envs.mini_cheetah.mini_cheetah_config import config_mini_cheetah
 from mini_gym.envs.mini_cheetah.velocity_tracking import VelocityTrackingEasyEnv
-
+from mini_gym.envs.wrappers.history_wrapper import HistoryWrapper
+from scripts.rl_lcm_policy import resolve_checkpoint
 from tqdm import tqdm
+
+ESTIMATOR_JIT_NAME = "estimator_latest.jit"
+BODY_JIT_NAME = "body_latest.jit"
 
 
 def quat_xyzw_to_yaw(quat_xyzw):
-    # Isaac Gym 的 root state 四元数顺序是 x, y, z, w，这里只提取机身 yaw 角。
     x, y, z, w = quat_xyzw
     return np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
-def load_env(headless=False):
-    # prepare environment
-    config_mini_cheetah(Cfg)
+def is_plain_value(value) -> bool:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return True
+    if isinstance(value, (list, tuple)):
+        return all(is_plain_value(v) for v in value)
+    return False
 
-    from ml_logger import logger
 
-    print(logger.glob("*"))
-    print(logger.prefix)
+def update_proto_group(group, values: dict) -> None:
+    for key, value in values.items():
+        if isinstance(value, dict) and hasattr(group, key):
+            target = getattr(group, key)
+            if isinstance(target, dict):
+                target.update({k: v for k, v in value.items() if is_plain_value(v)})
+            else:
+                update_proto_group(target, value)
+        elif is_plain_value(value):
+            setattr(group, key, value)
 
-    params = logger.load_pkl('parameters.pkl')
 
-    if 'kwargs' in params[0]:
-        deps = params[0]['kwargs']
+def apply_saved_parameters(params) -> None:
+    from mini_gym_learn.ppo import RunnerArgs
+    from mini_gym_learn.ppo.actor_critic import AC_Args
+    from mini_gym_learn.ppo.ppo import PPO_Args
 
-        from mini_gym_learn.ppo.ppo import PPO_Args
-        from mini_gym_learn.ppo.actor_critic import AC_Args
-        from mini_gym_learn.ppo import RunnerArgs
+    if isinstance(params, dict):
+        for name, values in params.get("Cfg", {}).items():
+            if hasattr(Cfg, name) and isinstance(values, dict):
+                update_proto_group(getattr(Cfg, name), values)
+        AC_Args._update(params.get("AC_Args", {}))
+        PPO_Args._update(params.get("PPO_Args", {}))
+        RunnerArgs._update(params.get("RunnerArgs", {}))
+        return
 
+    if isinstance(params, (list, tuple)) and params and "kwargs" in params[0]:
+        deps = params[0]["kwargs"]
         AC_Args._update(deps)
         PPO_Args._update(deps)
         RunnerArgs._update(deps)
-        Cfg.terrain._update(deps)
-        Cfg.commands._update(deps)
-        Cfg.normalization._update(deps)
-        Cfg.env._update(deps)
-        Cfg.domain_rand._update(deps)
-        Cfg.rewards._update(deps)
-        Cfg.reward_scales._update(deps)
-        Cfg.perception._update(deps)
-        Cfg.domain_rand._update(deps)
-        Cfg.control._update(deps)
+        for group_name in ("terrain", "commands", "normalization", "env", "domain_rand", "rewards", "control"):
+            getattr(Cfg, group_name)._update(deps)
+        return
 
-    # turn off DR for evaluation script
+    raise RuntimeError(f"unsupported parameters.pkl format: {type(params)}")
+
+
+def disable_eval_randomization() -> None:
     Cfg.domain_rand.push_robots = False
     Cfg.domain_rand.randomize_friction = False
-    Cfg.domain_rand.randomize_gravity = False
     Cfg.domain_rand.randomize_restitution = False
-    Cfg.domain_rand.randomize_motor_offset = False
-    Cfg.domain_rand.randomize_motor_strength = False
-    Cfg.domain_rand.randomize_friction_indep = False
-    Cfg.domain_rand.randomize_ground_friction = False
     Cfg.domain_rand.randomize_base_mass = False
+    Cfg.domain_rand.randomize_com_displacement = False
+    Cfg.domain_rand.randomize_motor_strength = False
     Cfg.domain_rand.randomize_Kd_factor = False
     Cfg.domain_rand.randomize_Kp_factor = False
     Cfg.domain_rand.randomize_motor_friction = False
     Cfg.domain_rand.randomize_pd_gains = False
     Cfg.domain_rand.randomize_foot_radius = False
-    Cfg.domain_rand.randomize_joint_friction = False
-    Cfg.domain_rand.randomize_com_displacement = False
     Cfg.noise.add_noise = False
+
+
+def load_jit_policy(run_dir: Path, device: str):
+    estimator_path, body_path = resolve_checkpoint(run_dir / "checkpoints")
+    estimator = torch.jit.load(str(estimator_path), map_location=device)
+    body = torch.jit.load(str(body_path), map_location=device)
+    estimator.eval()
+    body.eval()
+
+    def policy(obs_dict):
+        obs = obs_dict["obs"] if isinstance(obs_dict, dict) else obs_dict
+        obs = obs.to(device)
+        with torch.no_grad():
+            estimator_output = estimator(obs)
+            return body(torch.cat((obs, estimator_output), dim=-1))
+
+    print(f"loaded Paper B JIT policy ({ESTIMATOR_JIT_NAME}, {BODY_JIT_NAME}) from {estimator_path.parent}")
+    return policy
+
+
+def load_env(run_dir: Path, headless=False):
+    config_mini_cheetah(Cfg)
+
+    from ml_logger import logger
+
+    params = logger.load_pkl("parameters.pkl")
+    apply_saved_parameters(params)
+    disable_eval_randomization()
 
     Cfg.env.num_recording_envs = 1
     Cfg.env.num_envs = 1
@@ -77,46 +128,28 @@ def load_env(headless=False):
     Cfg.sim.physx.max_gpu_contact_pairs = 2 ** 18
     Cfg.sim.physx.default_buffer_size_multiplier = 1
 
-    from mini_gym.envs.wrappers.history_wrapper import HistoryWrapper
-
-    env = VelocityTrackingEasyEnv(sim_device='cuda:0', headless=headless, cfg=Cfg)
+    env = VelocityTrackingEasyEnv(sim_device="cuda:0", headless=headless, cfg=Cfg)
     env = HistoryWrapper(env)
-
-    # load policy
-    from ml_logger import logger
-    from mini_gym_learn.ppo.actor_critic import ActorCritic
-
-    actor_critic = ActorCritic(
-        num_obs=Cfg.env.num_observations,
-        num_privileged_obs=Cfg.env.num_privileged_obs,
-        num_obs_history=Cfg.env.num_observations * \
-                        Cfg.env.num_observation_history,
-        num_actions=Cfg.env.num_actions)
-
-    print(logger.prefix)
-    print(logger.glob("*"))
-    weights = logger.load_torch("checkpoints/ac_weights_last.pt")
-    actor_critic.load_state_dict(state_dict=weights)
-    actor_critic.to(env.device)
-    policy = actor_critic.act_inference
-
+    policy = load_jit_policy(run_dir, env.device)
     return env, policy
+
+
+def latest_run_dir() -> Path:
+    runs = sorted(glob.glob(f"{MINI_GYM_ROOT_DIR}/runs/rapid-locomotion/*/*/*"), key=os.path.getmtime)
+    if not runs:
+        raise FileNotFoundError("no runs found under runs/rapid-locomotion")
+    return Path(runs[-1]).resolve()
 
 
 def play_mc(headless=True):
     from ml_logger import logger
 
-    from pathlib import Path
-    from mini_gym import MINI_GYM_ROOT_DIR
-    import glob
-    import os
+    run_dir = latest_run_dir()
+    print(run_dir)
 
-    recent_runs = sorted(glob.glob(f"{MINI_GYM_ROOT_DIR}/runs/rapid-locomotion/*/*/*"), key=os.path.getmtime)
-    print(recent_runs)
-
-    logger.configure(Path(recent_runs[-1]).resolve())
-
-    env, policy = load_env(headless=headless)
+    logger.configure(run_dir)
+    env, policy = load_env(run_dir, headless=headless)
+    base_env = env.env
 
     num_eval_steps = 500
     x_vel_cmd, y_vel_cmd, yaw_vel_cmd = 0.0, 0.0, 0.0
@@ -125,42 +158,35 @@ def play_mc(headless=True):
     target_x_vels = np.ones(num_eval_steps) * x_vel_cmd
     yaw_angles = np.zeros(num_eval_steps)
 
-    base_env = env.env
-    # 只画右前和右后两个 abad/hip 横摆髋关节，避免 12 个关节混在一起看不清。
-    # FR_hip_joint: 正数为右前腿内收，负数为右前腿外摆。
-    # RR_hip_joint: 正数为右后腿内收，负数为右后腿外摆。
     right_hip_joint_names = ["FR_hip_joint", "RR_hip_joint"]
-    right_hip_joint_indices = [
-        base_env.dof_names.index(name) for name in right_hip_joint_names
-    ]
+    right_hip_joint_indices = [base_env.dof_names.index(name) for name in right_hip_joint_names]
     right_hip_joint_positions = np.zeros((num_eval_steps, len(right_hip_joint_names)))
 
     obs = env.reset()
+    base_env.commands[:, 0] = x_vel_cmd
+    base_env.commands[:, 1] = y_vel_cmd
+    base_env.commands[:, 2] = yaw_vel_cmd
 
     for i in tqdm(range(num_eval_steps)):
-        with torch.no_grad():
-            actions = policy(obs)
-        env.commands[:, 0] = x_vel_cmd
-        env.commands[:, 1] = y_vel_cmd
-        env.commands[:, 2] = yaw_vel_cmd
+        base_env.commands[:, 0] = x_vel_cmd
+        base_env.commands[:, 1] = y_vel_cmd
+        base_env.commands[:, 2] = yaw_vel_cmd
+        actions = policy(obs)
         obs, rew, done, info = env.step(actions)
 
-        measured_x_vels[i] = env.base_lin_vel[0, 0]
+        measured_x_vels[i] = base_env.base_lin_vel[0, 0]
         yaw_angles[i] = quat_xyzw_to_yaw(base_env.root_states[0, 3:7].cpu().numpy())
-        right_hip_joint_positions[i] = (
-            base_env.dof_pos[0, right_hip_joint_indices].cpu().numpy()
-        )
+        right_hip_joint_positions[i] = base_env.dof_pos[0, right_hip_joint_indices].cpu().numpy()
 
-    # 画图时把 yaw 展开后转成角度制，避免跨过 +/-pi 时曲线突然跳变。
     yaw_degrees = np.rad2deg(np.unwrap(yaw_angles))
     right_hip_joint_degrees = np.rad2deg(right_hip_joint_positions)
 
-    # 绘制前向速度、机身 yaw，以及右前/右后两个髋关节角度。
     from matplotlib import pyplot as plt
-    time_axis = np.linspace(0, num_eval_steps * env.dt, num_eval_steps)
+
+    time_axis = np.linspace(0, num_eval_steps * base_env.dt, num_eval_steps)
     fig, axs = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
-    axs[0].plot(time_axis, measured_x_vels, color='black', linestyle="-", label="Measured")
-    axs[0].plot(time_axis, target_x_vels, color='black', linestyle="--", label="Desired")
+    axs[0].plot(time_axis, measured_x_vels, color="black", linestyle="-", label="Measured")
+    axs[0].plot(time_axis, target_x_vels, color="black", linestyle="--", label="Desired")
     axs[0].legend()
     axs[0].set_title("Forward Linear Velocity")
     axs[0].set_ylabel("Velocity (m/s)")
@@ -188,6 +214,5 @@ def play_mc(headless=True):
     plt.show()
 
 
-if __name__ == '__main__':
-    # to see the environment rendering, set headless=False
+if __name__ == "__main__":
     play_mc(headless=False)

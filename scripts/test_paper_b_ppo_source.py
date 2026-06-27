@@ -36,6 +36,16 @@ class PaperBPpoSourceTest(unittest.TestCase):
         self.assertIn("body_latest.jit", source)
         self.assertNotIn("adaptation_module_latest.jit", source)
 
+    def test_play_scripts_load_estimator_and_body_jit(self):
+        for relative_path in ("scripts/play.py", "scripts/play_zero_probe.py"):
+            source = self.read(relative_path)
+
+            self.assertIn("estimator_latest.jit", source)
+            self.assertIn("body_latest.jit", source)
+            self.assertIn("torch.jit.load", source)
+            self.assertNotIn("ac_weights_last.pt", source)
+            self.assertNotIn("ActorCritic(", source)
+
 
 if __name__ == "__main__":
     unittest.main()

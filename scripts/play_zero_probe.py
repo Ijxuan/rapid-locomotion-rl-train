@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import pickle
+import sys
 import time
 from pathlib import Path
 
@@ -15,6 +16,10 @@ assert isaacgym
 import numpy as np
 import torch
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from mini_gym.envs import *  # noqa: F401,F403
 from mini_gym.envs.base.paper_b_observation import OBSERVATION_SLICES
 from mini_gym.envs.base.legged_robot_config import Cfg
@@ -23,7 +28,7 @@ from mini_gym.envs.mini_cheetah.velocity_tracking import VelocityTrackingEasyEnv
 from mini_gym.envs.wrappers.history_wrapper import HistoryWrapper
 from mini_gym.utils.torch_utils import quat_rotate_inverse
 from mini_gym_learn.ppo import RunnerArgs
-from mini_gym_learn.ppo.actor_critic import AC_Args, ActorCritic
+from mini_gym_learn.ppo.actor_critic import AC_Args
 from mini_gym_learn.ppo.ppo import PPO_Args
 
 
@@ -115,6 +120,22 @@ def disable_eval_randomization() -> None:
     Cfg.noise.add_noise = False
 
 
+class JitPolicyBundle:
+    def __init__(self, estimator, body):
+        self.estimator = estimator
+        self.actor_body = body
+
+    def estimate(self, observations):
+        return self.estimator(observations)
+
+    def act_student(self, observations, observation_history=None, policy_info={}):
+        del observation_history
+        estimator_output = self.estimate(observations)
+        action = self.actor_body(torch.cat((observations, estimator_output), dim=-1))
+        policy_info["estimator_outputs"] = estimator_output.detach().cpu().numpy()
+        return action
+
+
 def load_env_and_policy(run_dir: Path, headless: bool, sim_device: str):
     config_mini_cheetah(Cfg)
     apply_saved_parameters(run_dir)
@@ -131,18 +152,12 @@ def load_env_and_policy(run_dir: Path, headless: bool, sim_device: str):
     env = VelocityTrackingEasyEnv(sim_device=sim_device, headless=headless, cfg=Cfg)
     env = HistoryWrapper(env)
 
-    actor_critic = ActorCritic(
-        num_obs=Cfg.env.num_observations,
-        num_privileged_obs=Cfg.env.num_privileged_obs,
-        num_obs_history=Cfg.env.num_observations * Cfg.env.num_observation_history,
-        num_actions=Cfg.env.num_actions,
-    )
-    weights = torch.load(run_dir / "checkpoints" / "ac_weights_last.pt", map_location=env.device)
-    actor_critic.load_state_dict(state_dict=weights)
-    actor_critic.to(env.device)
-    actor_critic.eval()
+    estimator = torch.jit.load(str(run_dir / "checkpoints" / "estimator_latest.jit"), map_location=env.device)
+    body = torch.jit.load(str(run_dir / "checkpoints" / "body_latest.jit"), map_location=env.device)
+    estimator.eval()
+    body.eval()
 
-    return env, actor_critic
+    return env, JitPolicyBundle(estimator, body)
 
 
 def hip_outward_sign(joint_name: str, current_value: float) -> float:
