@@ -200,12 +200,12 @@ class Runner:
                                      **caches.dist_cache.get_summary()},
                                     path=f"curriculum/info.pkl", append=True)
 
-            mean_value_loss, mean_surrogate_loss, mean_adaptation_module_loss = self.alg.update()
+            mean_value_loss, mean_surrogate_loss, mean_estimator_loss = self.alg.update()
 
             logger.store_metrics(
                 time_elapsed=logger.since('start'),
                 time_iter=logger.split('epoch'),
-                adaptation_loss=mean_adaptation_module_loss,
+                estimator_loss=mean_estimator_loss,
                 mean_value_loss=mean_value_loss,
                 mean_surrogate_loss=mean_surrogate_loss
             )
@@ -228,17 +228,17 @@ class Runner:
 
                     os.makedirs(path, exist_ok=True)
 
-                    adaptation_module_path = f'{path}/adaptation_module_latest.jit'
-                    adaptation_module = copy.deepcopy(self.alg.actor_critic.adaptation_module).to('cpu')
-                    traced_script_adaptation_module = torch.jit.script(adaptation_module)
-                    traced_script_adaptation_module.save(adaptation_module_path)
+                    estimator_path = f'{path}/estimator_latest.jit'
+                    estimator = copy.deepcopy(self.alg.actor_critic.estimator).to('cpu')
+                    traced_script_estimator = torch.jit.script(estimator)
+                    traced_script_estimator.save(estimator_path)
 
                     body_path = f'{path}/body_latest.jit'
                     body_model = copy.deepcopy(self.alg.actor_critic.actor_body).to('cpu')
                     traced_script_body_module = torch.jit.script(body_model)
                     traced_script_body_module.save(body_path)
 
-                    logger.upload_file(file_path=adaptation_module_path, target_path=f"checkpoints/" )
+                    logger.upload_file(file_path=estimator_path, target_path=f"checkpoints/")
                     logger.upload_file(file_path=body_path, target_path=f"checkpoints/")
 
             self.current_learning_iteration += num_learning_iterations
@@ -251,17 +251,17 @@ class Runner:
 
             os.makedirs(path, exist_ok=True)
 
-            adaptation_module_path = f'{path}/adaptation_module_latest.jit'
-            adaptation_module = copy.deepcopy(self.alg.actor_critic.adaptation_module).to('cpu')
-            traced_script_adaptation_module = torch.jit.script(adaptation_module)
-            traced_script_adaptation_module.save(adaptation_module_path)
+            estimator_path = f'{path}/estimator_latest.jit'
+            estimator = copy.deepcopy(self.alg.actor_critic.estimator).to('cpu')
+            traced_script_estimator = torch.jit.script(estimator)
+            traced_script_estimator.save(estimator_path)
 
             body_path = f'{path}/body_latest.jit'
             body_model = copy.deepcopy(self.alg.actor_critic.actor_body).to('cpu')
             traced_script_body_module = torch.jit.script(body_model)
             traced_script_body_module.save(body_path)
 
-            logger.upload_file(file_path=adaptation_module_path, target_path=f"checkpoints/")
+            logger.upload_file(file_path=estimator_path, target_path=f"checkpoints/")
             logger.upload_file(file_path=body_path, target_path=f"checkpoints/")
 
     def log_video(self, it):

@@ -21,8 +21,8 @@ class PPO_Args(PrefixProto):
     num_learning_epochs = 5
     num_mini_batches = 4  # mini batch size = num_envs*nsteps / nminibatches
     learning_rate = 1.e-3  # 5.e-4
-    adaptation_module_learning_rate = 1.e-3
-    num_adaptation_module_substeps = 1
+    estimator_learning_rate = 1.e-3
+    num_estimator_substeps = 1
     schedule = 'adaptive'  # could be adaptive, fixed
     gamma = 0.99
     lam = 0.95
@@ -41,9 +41,10 @@ class PPO:
         self.actor_critic = actor_critic
         self.actor_critic.to(device)
         self.storage = None  # initialized later
-        self.optimizer = optim.Adam(self.actor_critic.parameters(), lr=PPO_Args.learning_rate)
-        self.adaptation_module_optimizer = optim.Adam(self.actor_critic.parameters(),
-                                                      lr=PPO_Args.adaptation_module_learning_rate)
+        self.policy_parameters = self.actor_critic.policy_parameters()
+        self.optimizer = optim.Adam(self.policy_parameters, lr=PPO_Args.learning_rate)
+        self.estimator_optimizer = optim.Adam(self.actor_critic.estimator.parameters(),
+                                              lr=PPO_Args.estimator_learning_rate)
         self.transition = RolloutStorage.Transition()
 
         self.learning_rate = PPO_Args.learning_rate
@@ -94,7 +95,7 @@ class PPO:
     def update(self):
         mean_value_loss = 0
         mean_surrogate_loss = 0
-        mean_adaptation_module_loss = 0
+        mean_estimator_loss = 0
         generator = self.storage.mini_batch_generator(PPO_Args.num_mini_batches, PPO_Args.num_learning_epochs)
         for obs_batch, critic_obs_batch, privileged_obs_batch, obs_history_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, old_actions_log_prob_batch, \
             old_mu_batch, old_sigma_batch, masks_batch, env_bins_batch in generator:
@@ -146,33 +147,42 @@ class PPO:
             # Gradient step
             self.optimizer.zero_grad()
             loss.backward()
-            nn.utils.clip_grad_norm_(self.actor_critic.parameters(), PPO_Args.max_grad_norm)
+            nn.utils.clip_grad_norm_(self.policy_parameters, PPO_Args.max_grad_norm)
             self.optimizer.step()
 
             mean_value_loss += value_loss.item()
             mean_surrogate_loss += surrogate_loss.item()
 
-            # Adaptation module gradient step
-            for epoch in range(PPO_Args.num_adaptation_module_substeps):
-                adaptation_pred = self.actor_critic.adaptation_module(obs_history_batch)
+            # Paper B estimator gradient step. The privileged observation buffer stores
+            # the supervised target: base linear velocity, foot height, contact state.
+            del obs_history_batch
+            for epoch in range(PPO_Args.num_estimator_substeps):
+                estimator_pred = self.actor_critic.estimate(obs_batch)
+                estimator_state_dim = self.actor_critic.estimator_state_dim
+                state_pred = estimator_pred[:, :estimator_state_dim]
+                state_target = privileged_obs_batch[:, :estimator_state_dim]
+                contact_pred = estimator_pred[:, estimator_state_dim:]
+                contact_target = privileged_obs_batch[:, estimator_state_dim:].clamp(0.0, 1.0)
+
+                state_loss = F.mse_loss(state_pred, state_target)
+                contact_loss = F.binary_cross_entropy(contact_pred, contact_target)
+                estimator_loss = state_loss + contact_loss
+
                 with torch.no_grad():
-                    adaptation_target = self.actor_critic.env_factor_encoder(privileged_obs_batch)
-                    residual = (adaptation_target - adaptation_pred).norm(dim=1)
+                    residual = (state_target - state_pred).norm(dim=1)
                     caches.slot_cache.log(env_bins_batch[:, 0].cpu().numpy().astype(np.uint8),
-                                          sysid_residual=residual.cpu().numpy())
+                                          estimator_residual=residual.cpu().numpy())
 
-                adaptation_loss = F.mse_loss(adaptation_pred, adaptation_target)
+                self.estimator_optimizer.zero_grad()
+                estimator_loss.backward()
+                self.estimator_optimizer.step()
 
-                self.adaptation_module_optimizer.zero_grad()
-                adaptation_loss.backward()
-                self.adaptation_module_optimizer.step()
-
-                mean_adaptation_module_loss += adaptation_loss.item()
+                mean_estimator_loss += estimator_loss.item()
 
         num_updates = PPO_Args.num_learning_epochs * PPO_Args.num_mini_batches
         mean_value_loss /= num_updates
         mean_surrogate_loss /= num_updates
-        mean_adaptation_module_loss /= (num_updates * PPO_Args.num_adaptation_module_substeps)
+        mean_estimator_loss /= (num_updates * PPO_Args.num_estimator_substeps)
         self.storage.clear()
 
-        return mean_value_loss, mean_surrogate_loss, mean_adaptation_module_loss
+        return mean_value_loss, mean_surrogate_loss, mean_estimator_loss

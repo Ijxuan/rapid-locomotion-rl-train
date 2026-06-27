@@ -9,15 +9,26 @@ from torch.distributions import Normal
 class AC_Args(PrefixProto, cli=False):
     # policy
     init_noise_std = 1.0
-    actor_hidden_dims = [512, 256, 128]
-    critic_hidden_dims = [512, 256, 128]
-    activation = 'elu'  # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
+    estimator_hidden_dims = [256, 128]
+    actor_hidden_dims = [512, 256, 64]
+    critic_hidden_dims = [512, 256, 64]
+    estimator_contact_dim = 4
+    activation = "elu"  # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
 
-    adaptation_module_branch_hidden_dims = [[256, 32]]
 
-    env_factor_encoder_branch_input_dims = [18]
-    env_factor_encoder_branch_latent_dims = [18]
-    env_factor_encoder_branch_hidden_dims = [[256, 128]]
+class Estimator(nn.Module):
+    def __init__(self, num_obs, output_dim, hidden_dims, contact_dim, activation_name):
+        super().__init__()
+        self.output_dim = output_dim
+        self.contact_dim = contact_dim
+        self.state_dim = output_dim - contact_dim
+        self.net = build_mlp(num_obs, hidden_dims, output_dim, activation_name)
+
+    def forward(self, observations):
+        raw_output = self.net(observations)
+        state = raw_output[..., :self.state_dim]
+        contact_probability = torch.sigmoid(raw_output[..., self.state_dim:])
+        return torch.cat((state, contact_probability), dim=-1)
 
 
 class ActorCritic(nn.Module):
@@ -33,74 +44,27 @@ class ActorCritic(nn.Module):
                 [key for key in kwargs.keys()]))
         super().__init__()
 
-        activation = get_activation(AC_Args.activation)
+        del num_obs_history
 
-        for i, (branch_input_dim, branch_hidden_dims, branch_latent_dim) in enumerate(
-                zip(AC_Args.env_factor_encoder_branch_input_dims,
-                    AC_Args.env_factor_encoder_branch_hidden_dims,
-                    AC_Args.env_factor_encoder_branch_latent_dims)):
-            # Env factor encoder
-            env_factor_encoder_layers = []
-            env_factor_encoder_layers.append(nn.Linear(branch_input_dim, branch_hidden_dims[0]))
-            env_factor_encoder_layers.append(activation)
-            for l in range(len(branch_hidden_dims)):
-                if l == len(branch_hidden_dims) - 1:
-                    env_factor_encoder_layers.append(
-                        nn.Linear(branch_hidden_dims[l], branch_latent_dim))
-                else:
-                    env_factor_encoder_layers.append(
-                        nn.Linear(branch_hidden_dims[l],
-                                  branch_hidden_dims[l + 1]))
-                    env_factor_encoder_layers.append(activation)
-        self.env_factor_encoder = nn.Sequential(*env_factor_encoder_layers)
-        self.add_module(f"encoder", self.env_factor_encoder)
+        self.num_obs = num_obs
+        self.num_estimator_outputs = num_privileged_obs
+        self.num_actions = num_actions
+        self.estimator_contact_dim = AC_Args.estimator_contact_dim
+        self.estimator_state_dim = self.num_estimator_outputs - self.estimator_contact_dim
 
-        # Adaptation module
-        for i, (branch_hidden_dims, branch_latent_dim) in enumerate(zip(AC_Args.adaptation_module_branch_hidden_dims,
-                                                                        AC_Args.env_factor_encoder_branch_latent_dims)):
-            adaptation_module_layers = []
-            adaptation_module_layers.append(nn.Linear(num_obs_history, branch_hidden_dims[0]))
-            adaptation_module_layers.append(activation)
-            for l in range(len(branch_hidden_dims)):
-                if l == len(branch_hidden_dims) - 1:
-                    adaptation_module_layers.append(
-                        nn.Linear(branch_hidden_dims[l], branch_latent_dim))
-                else:
-                    adaptation_module_layers.append(
-                        nn.Linear(branch_hidden_dims[l],
-                                  branch_hidden_dims[l + 1]))
-                    adaptation_module_layers.append(activation)
-        self.adaptation_module = nn.Sequential(*adaptation_module_layers)
-        self.add_module(f"adaptation_module", self.adaptation_module)
+        self.estimator = Estimator(
+            num_obs=num_obs,
+            output_dim=self.num_estimator_outputs,
+            hidden_dims=AC_Args.estimator_hidden_dims,
+            contact_dim=self.estimator_contact_dim,
+            activation_name=AC_Args.activation,
+        )
 
-        total_latent_dim = int(torch.sum(torch.Tensor(AC_Args.env_factor_encoder_branch_latent_dims)))
+        actor_input_dim = num_obs + self.num_estimator_outputs
+        self.actor_body = build_mlp(actor_input_dim, AC_Args.actor_hidden_dims, num_actions, AC_Args.activation)
+        self.critic_body = build_mlp(actor_input_dim, AC_Args.critic_hidden_dims, 1, AC_Args.activation)
 
-        # Policy
-        actor_layers = []
-        actor_layers.append(nn.Linear(total_latent_dim + num_obs, AC_Args.actor_hidden_dims[0]))
-        actor_layers.append(activation)
-        for l in range(len(AC_Args.actor_hidden_dims)):
-            if l == len(AC_Args.actor_hidden_dims) - 1:
-                actor_layers.append(nn.Linear(AC_Args.actor_hidden_dims[l], num_actions))
-            else:
-                actor_layers.append(nn.Linear(AC_Args.actor_hidden_dims[l], AC_Args.actor_hidden_dims[l + 1]))
-                actor_layers.append(activation)
-        self.actor_body = nn.Sequential(*actor_layers)
-
-        # Value function
-        critic_layers = []
-        critic_layers.append(nn.Linear(total_latent_dim + num_obs, AC_Args.critic_hidden_dims[0]))
-        critic_layers.append(activation)
-        for l in range(len(AC_Args.critic_hidden_dims)):
-            if l == len(AC_Args.critic_hidden_dims) - 1:
-                critic_layers.append(nn.Linear(AC_Args.critic_hidden_dims[l], 1))
-            else:
-                critic_layers.append(nn.Linear(AC_Args.critic_hidden_dims[l], AC_Args.critic_hidden_dims[l + 1]))
-                critic_layers.append(activation)
-        self.critic_body = nn.Sequential(*critic_layers)
-
-        print(f"Environment Factor Encoder: {self.env_factor_encoder}")
-        print(f"Adaptation Module: {self.adaptation_module}")
+        print(f"Estimator MLP: {self.estimator}")
         print(f"Actor MLP: {self.actor_body}")
         print(f"Critic MLP: {self.critic_body}")
 
@@ -134,43 +98,73 @@ class ActorCritic(nn.Module):
     def entropy(self):
         return self.distribution.entropy().sum(dim=-1)
 
-    def update_distribution(self, observations, privileged_observations):
-        latent = self.env_factor_encoder(privileged_observations)
-        mean = self.actor_body(torch.cat((observations, latent), dim=-1))
+    def policy_parameters(self):
+        return list(self.actor_body.parameters()) + list(self.critic_body.parameters()) + [self.std]
+
+    def estimate(self, observations):
+        return self.estimator(observations)
+
+    def _estimated_state_for_policy(self, observations):
+        return self.estimate(observations).detach()
+
+    def _actor_input_from_estimator(self, observations):
+        estimated_state = self._estimated_state_for_policy(observations)
+        return torch.cat((observations, estimated_state), dim=-1)
+
+    def _actor_input_from_target(self, observations, estimator_target):
+        return torch.cat((observations, estimator_target.detach()), dim=-1)
+
+    def update_distribution(self, observations, privileged_observations=None):
+        del privileged_observations
+        mean = self.actor_body(self._actor_input_from_estimator(observations))
         self.distribution = Normal(mean, mean * 0. + self.std)
 
-    def act(self, observations, privileged_observations, **kwargs):
-        self.update_distribution(observations, privileged_observations)
+    def act(self, observations, privileged_observations=None, **kwargs):
+        del privileged_observations, kwargs
+        self.update_distribution(observations)
         return self.distribution.sample()
 
     def get_actions_log_prob(self, actions):
         return self.distribution.log_prob(actions).sum(dim=-1)
 
     def act_expert(self, ob, policy_info={}):
-        return self.act_teacher(ob["obs"], ob["privileged_obs"])
+        return self.act_teacher(ob["obs"], ob["privileged_obs"], policy_info)
 
     def act_inference(self, ob, policy_info={}):
-        if ob["privileged_obs"] is not None:
-            gt_latent = self.env_factor_encoder(ob["privileged_obs"])
-            policy_info["gt_latents"] = gt_latent.detach().cpu().numpy()
-        return self.act_student(ob["obs"], ob["obs_history"])
+        privileged_obs = ob.get("privileged_obs")
+        if privileged_obs is not None:
+            policy_info["estimator_targets"] = privileged_obs.detach().cpu().numpy()
+        return self.act_student(ob["obs"], ob.get("obs_history"), policy_info)
 
-    def act_student(self, observations, observation_history, policy_info={}):
-        latent = self.adaptation_module(observation_history)
-        actions_mean = self.actor_body(torch.cat((observations, latent), dim=-1))
-        policy_info["latents"] = latent.detach().cpu().numpy()
+    def act_student(self, observations, observation_history=None, policy_info={}):
+        del observation_history
+        estimated_state = self._estimated_state_for_policy(observations)
+        actions_mean = self.actor_body(torch.cat((observations, estimated_state), dim=-1))
+        policy_info["estimator_outputs"] = estimated_state.detach().cpu().numpy()
         return actions_mean
 
     def act_teacher(self, observations, privileged_info, policy_info={}):
-        latent = self.env_factor_encoder(privileged_info)
-        actions_mean = self.actor_body(torch.cat((observations, latent), dim=-1))
-        policy_info["latents"] = latent.detach().cpu().numpy()
+        if privileged_info is None:
+            return self.act_student(observations, None, policy_info)
+        actions_mean = self.actor_body(self._actor_input_from_target(observations, privileged_info))
+        policy_info["estimator_targets"] = privileged_info.detach().cpu().numpy()
         return actions_mean
 
-    def evaluate(self, critic_observations, privileged_observations, **kwargs):
-        latent = self.env_factor_encoder(privileged_observations)
-        value = self.critic_body(torch.cat((critic_observations, latent), dim=-1))
+    def evaluate(self, critic_observations, privileged_observations=None, **kwargs):
+        del privileged_observations, kwargs
+        value = self.critic_body(self._actor_input_from_estimator(critic_observations))
         return value
+
+
+def build_mlp(input_dim, hidden_dims, output_dim, activation_name):
+    layers = [nn.Linear(input_dim, hidden_dims[0]), get_activation(activation_name)]
+    for layer_index in range(len(hidden_dims)):
+        if layer_index == len(hidden_dims) - 1:
+            layers.append(nn.Linear(hidden_dims[layer_index], output_dim))
+        else:
+            layers.append(nn.Linear(hidden_dims[layer_index], hidden_dims[layer_index + 1]))
+            layers.append(get_activation(activation_name))
+    return nn.Sequential(*layers)
 
 
 def get_activation(act_name):
