@@ -1,3 +1,31 @@
+# Paper B Mini Cheetah Reproduction Branch
+
+This branch keeps the original rapid-locomotion training framework and Mini Cheetah assets, but changes the Mini Cheetah task toward Ji et al. "Concurrent Training of a Control Policy and a State Estimator" (RA-L 2022):
+
+* 142D Paper B observation and 11D estimator target/output.
+* Estimator/body JIT export as `estimator_latest.jit` and `body_latest.jit`.
+* Paper B reward aggregation `r_total = r_pos * exp(0.2 * r_neg)`.
+* Paper B command curriculum, reset noise, domain randomization, and sphere-foot asset setup.
+
+Local code-only checks that do not require Isaac Gym:
+
+```bash
+python -m unittest scripts.test_paper_b_layout scripts.test_paper_b_rewards scripts.test_paper_b_ppo_source scripts.test_paper_b_command_asset scripts.test_rl_deploy
+python -m py_compile mini_gym/envs/base/paper_b_observation.py mini_gym/envs/base/paper_b_rewards.py mini_gym/envs/base/paper_b_commands.py mini_gym/envs/base/paper_b_assets.py mini_gym/deploy/rapid_locomotion_policy.py scripts/rl_lcm_policy.py
+```
+
+Remote Isaac Gym smoke sequence:
+
+```bash
+git checkout paper-b-reproduction
+git pull
+# Batch 2: create 8 envs, reset, check obs=(8, 142), privileged=(8, 11), finite.
+# Batch 3: run 2 PPO iterations, check estimator_loss/value/surrogate logs.
+# Batch 4: run 5 env steps, check finite reward/reset/terminal penalty.
+# Batch 5: run 1-2 short iterations, check zero-command ratio and DR buffers.
+# Batch 6: run train/play/deploy checkpoint load smoke, check estimator/body JIT paths.
+```
+
 # Code for Rapid Locomotion via Reinforcement Learning
 
 This repository provides an implementation of the paper:

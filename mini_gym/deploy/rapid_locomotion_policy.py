@@ -1,39 +1,26 @@
-"""Shared deployment math for rapid-locomotion Mini Cheetah policies."""
+"""Shared deployment math for Paper B Mini Cheetah policies."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable
 
 import numpy as np
 
 
-OBS_DIM = 42
-HISTORY_LENGTH = 15
-OBS_HISTORY_DIM = OBS_DIM * HISTORY_LENGTH
-LATENT_DIM = 18
-ACTOR_INPUT_DIM = OBS_DIM + LATENT_DIM
+OBS_DIM = 142
+ESTIMATOR_OUTPUT_DIM = 11
+ACTOR_INPUT_DIM = OBS_DIM + ESTIMATOR_OUTPUT_DIM
 ACTION_DIM = 12
+FOOT_COUNT = 4
 
-POLICY_DT = 0.02
-ACTION_SCALE = 0.25
+POLICY_DT = 0.01
+ACTION_SCALE = 0.1
+HIP_SCALE_REDUCTION = 1.0
 
-# 髋关节横摆关节(abad/hip, 每条腿第 0 个关节)的动作缩放系数。
-# 训练环境只把这些关节的 action delta 再乘一次该系数，thigh/calf 不受影响。
-HIP_SCALE_REDUCTION = 0.4
+KP = 17.0
+KD = 0.4
 
-KP = 20.0
-KD = 0.5
-
-LIN_VEL_SCALE = 2.0
-ANG_VEL_SCALE = 0.25
-DOF_POS_SCALE = 1.0
-DOF_VEL_SCALE = 0.05
-
-COMMAND_SCALE = np.array([LIN_VEL_SCALE, LIN_VEL_SCALE, ANG_VEL_SCALE], dtype=np.float32)
-
-# Mini Cheetah Isaac Gym DOF order observed in the training environment:
-# FL, FR, RL, RR; each leg is abad/hip, thigh, calf.
 DEFAULT_Q_POLICY = np.array(
     [
         0.1,
@@ -56,8 +43,6 @@ DEFAULT_Q_POLICY = np.array(
 # corresponding robot-order index.
 POLICY_TO_ROBOT = np.array([3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8], dtype=np.int64)
 ROBOT_TO_POLICY = POLICY_TO_ROBOT.copy()
-# policy 顺序中的 abad/hip 横摆关节索引: FL_hip, FR_hip, RL_hip, RR_hip。
-HIP_INDICES = np.array([0, 3, 6, 9], dtype=np.int64)
 
 
 def _array(values: Iterable[float], size: int, name: str) -> np.ndarray:
@@ -82,31 +67,43 @@ def policy_to_robot_order(values: Iterable[float]) -> np.ndarray:
 
 def action_to_target_q(action: Iterable[float]) -> np.ndarray:
     action = _array(action, ACTION_DIM, "action")
-    scaled = action * ACTION_SCALE
-    # 只缩小四个 abad/hip 横摆关节的目标角增量，避免髋关节左右摆幅过大。
-    scaled[HIP_INDICES] *= HIP_SCALE_REDUCTION
-    return DEFAULT_Q_POLICY + scaled
+    return DEFAULT_Q_POLICY + ACTION_SCALE * action
 
 
 def build_observation(
-    projected_gravity: Iterable[float],
-    command: Iterable[float],
+    base_quat: Iterable[float],
+    base_ang_vel: Iterable[float],
     q_policy: Iterable[float],
     qd_policy: Iterable[float],
-    last_action: Iterable[float],
+    previous_desired_joint_positions: Iterable[float],
+    joint_position_error_history: Iterable[float],
+    joint_velocity_history: Iterable[float],
+    foot_positions_body: Iterable[float],
+    command: Iterable[float],
 ) -> np.ndarray:
-    projected_gravity = _array(projected_gravity, 3, "projected_gravity")
-    command = _array(command, 3, "command")
+    base_quat = _array(base_quat, 4, "base_quat")
+    base_ang_vel = _array(base_ang_vel, 3, "base_ang_vel")
     q_policy = _array(q_policy, ACTION_DIM, "q_policy")
     qd_policy = _array(qd_policy, ACTION_DIM, "qd_policy")
-    last_action = _array(last_action, ACTION_DIM, "last_action")
+    previous_desired_joint_positions = _array(
+        previous_desired_joint_positions, ACTION_DIM * 2, "previous_desired_joint_positions")
+    joint_position_error_history = _array(
+        joint_position_error_history, ACTION_DIM * 3, "joint_position_error_history")
+    joint_velocity_history = _array(joint_velocity_history, ACTION_DIM * 3, "joint_velocity_history")
+    foot_positions_body = _array(foot_positions_body, FOOT_COUNT * 3, "foot_positions_body")
+    command = _array(command, 3, "command")
+
     obs = np.concatenate(
         [
-            projected_gravity,
-            command * COMMAND_SCALE,
-            (q_policy - DEFAULT_Q_POLICY) * DOF_POS_SCALE,
-            qd_policy * DOF_VEL_SCALE,
-            last_action,
+            base_quat,
+            base_ang_vel,
+            q_policy,
+            qd_policy,
+            previous_desired_joint_positions,
+            joint_position_error_history,
+            joint_velocity_history,
+            foot_positions_body,
+            command,
         ]
     ).astype(np.float32)
     if obs.size != OBS_DIM:
@@ -116,17 +113,49 @@ def build_observation(
 
 @dataclass
 class ObservationHistory:
-    length: int = HISTORY_LENGTH
-    obs_dim: int = OBS_DIM
-
-    def __post_init__(self) -> None:
-        self.buffer = np.zeros(self.length * self.obs_dim, dtype=np.float32)
+    previous_desired_joint_positions: np.ndarray = field(
+        default_factory=lambda: np.tile(DEFAULT_Q_POLICY, 2).astype(np.float32))
+    joint_position_error_history: np.ndarray = field(
+        default_factory=lambda: np.zeros(ACTION_DIM * 3, dtype=np.float32))
+    joint_velocity_history: np.ndarray = field(
+        default_factory=lambda: np.zeros(ACTION_DIM * 3, dtype=np.float32))
 
     def reset(self) -> None:
-        self.buffer.fill(0.0)
+        self.previous_desired_joint_positions[:] = np.tile(DEFAULT_Q_POLICY, 2)
+        self.joint_position_error_history.fill(0.0)
+        self.joint_velocity_history.fill(0.0)
 
-    def update(self, obs: Iterable[float]) -> np.ndarray:
-        obs = _array(obs, self.obs_dim, "obs")
-        self.buffer[:-self.obs_dim] = self.buffer[self.obs_dim:]
-        self.buffer[-self.obs_dim:] = obs
-        return self.buffer.copy()
+    def update_joint_state(self, q_policy: Iterable[float], qd_policy: Iterable[float]) -> None:
+        q_policy = _array(q_policy, ACTION_DIM, "q_policy")
+        qd_policy = _array(qd_policy, ACTION_DIM, "qd_policy")
+        self.joint_position_error_history[ACTION_DIM:] = self.joint_position_error_history[:-ACTION_DIM]
+        self.joint_position_error_history[:ACTION_DIM] = q_policy - DEFAULT_Q_POLICY
+        self.joint_velocity_history[ACTION_DIM:] = self.joint_velocity_history[:-ACTION_DIM]
+        self.joint_velocity_history[:ACTION_DIM] = qd_policy
+
+    def update_desired_joint_positions(self, target_q: Iterable[float]) -> None:
+        target_q = _array(target_q, ACTION_DIM, "target_q")
+        self.previous_desired_joint_positions[ACTION_DIM:] = self.previous_desired_joint_positions[:ACTION_DIM]
+        self.previous_desired_joint_positions[:ACTION_DIM] = target_q
+
+    def build(
+        self,
+        base_quat: Iterable[float],
+        base_ang_vel: Iterable[float],
+        q_policy: Iterable[float],
+        qd_policy: Iterable[float],
+        foot_positions_body: Iterable[float],
+        command: Iterable[float],
+    ) -> np.ndarray:
+        self.update_joint_state(q_policy, qd_policy)
+        return build_observation(
+            base_quat,
+            base_ang_vel,
+            q_policy,
+            qd_policy,
+            self.previous_desired_joint_positions,
+            self.joint_position_error_history,
+            self.joint_velocity_history,
+            foot_positions_body,
+            command,
+        )

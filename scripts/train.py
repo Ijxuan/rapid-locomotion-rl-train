@@ -18,11 +18,18 @@ def train_mc(headless=True):
 
     config_mini_cheetah(Cfg)
 
-    env = VelocityTrackingEasyEnv(sim_device='cuda:0', headless=False, cfg=Cfg)
+    env = VelocityTrackingEasyEnv(sim_device='cuda:0', headless=headless, cfg=Cfg)
 
     # log the experiment parameters
     logger.log_params(AC_Args=vars(AC_Args), PPO_Args=vars(PPO_Args), RunnerArgs=vars(RunnerArgs),
-                      Cfg=vars(Cfg))
+                      Cfg=vars(Cfg),
+                      PaperB=dict(
+                          observation_dim=Cfg.env.num_observations,
+                          estimator_dim=Cfg.env.estimator_output_dim,
+                          actor_input_dim=Cfg.env.num_observations + Cfg.env.estimator_output_dim,
+                          estimator_jit="estimator_latest.jit",
+                          body_jit="body_latest.jit",
+                      ))
 
     env = HistoryWrapper(env)
     gpu_id = 0

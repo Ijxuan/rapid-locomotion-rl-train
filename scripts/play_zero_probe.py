@@ -17,6 +17,7 @@ import torch
 from isaacgym.torch_utils import quat_rotate_inverse
 
 from mini_gym.envs import *  # noqa: F401,F403
+from mini_gym.envs.base.paper_b_observation import OBSERVATION_SLICES
 from mini_gym.envs.base.legged_robot_config import Cfg
 from mini_gym.envs.mini_cheetah.mini_cheetah_config import config_mini_cheetah
 from mini_gym.envs.mini_cheetah.velocity_tracking import VelocityTrackingEasyEnv
@@ -106,6 +107,9 @@ def disable_eval_randomization() -> None:
     Cfg.domain_rand.randomize_base_mass = False
     Cfg.domain_rand.randomize_Kd_factor = False
     Cfg.domain_rand.randomize_Kp_factor = False
+    Cfg.domain_rand.randomize_motor_friction = False
+    Cfg.domain_rand.randomize_pd_gains = False
+    Cfg.domain_rand.randomize_foot_radius = False
     Cfg.domain_rand.randomize_joint_friction = False
     Cfg.domain_rand.randomize_com_displacement = False
     Cfg.noise.add_noise = False
@@ -162,9 +166,9 @@ def set_default_hip_outward(base_env, hip_out_deg: float | None) -> list[tuple[s
         if not is_hip_joint and i % 3 != 0:
             continue
 
-        current_value = float(base_env.default_dof_pos[0, i])
+        current_value = float(base_env.default_dof_pos[i])
         value = hip_outward_sign(joint_name, current_value) * hip_out_rad
-        base_env.default_dof_pos[:, i] = value
+        base_env.default_dof_pos[i] = value
         changed.append((joint_name, value))
     return changed
 
@@ -173,7 +177,7 @@ def force_level_default_zero_command(env: HistoryWrapper):
     base_env = env.env
     env_ids = torch.tensor([0], dtype=torch.long, device=base_env.device)
 
-    dof_pos = base_env.default_dof_pos[env_ids].clone()
+    dof_pos = base_env.default_dof_pos.unsqueeze(0).repeat(len(env_ids), 1)
     base_state = base_env.base_init_state.clone().view(1, -1)
     base_state[:, :3] += base_env.env_origins[env_ids]
     base_state[:, 3:7] = torch.tensor([0.0, 0.0, 0.0, 1.0], device=base_env.device)
@@ -182,9 +186,12 @@ def force_level_default_zero_command(env: HistoryWrapper):
 
     base_env.commands[:, :] = 0.0
     base_env.actions[:, :] = 0.0
+    base_env.last_last_actions[:, :] = 0.0
     base_env.last_actions[:, :] = 0.0
     base_env.last_dof_vel[:, :] = 0.0
     base_env.last_root_vel[:, :] = 0.0
+    if hasattr(base_env, "_reset_paper_b_history_buffers"):
+        base_env._reset_paper_b_history_buffers(env_ids)
 
     base_env.base_quat[:] = base_env.root_states[:, 3:7]
     base_env.base_lin_vel[:] = quat_rotate_inverse(base_env.base_quat, base_env.root_states[:, 7:10])
@@ -209,7 +216,6 @@ def hold_viewer(env: HistoryWrapper, seconds: float) -> None:
 
 def action_to_target_q(base_env, action: torch.Tensor) -> torch.Tensor:
     scaled = action[:, :12] * Cfg.control.action_scale
-    scaled[:, [0, 3, 6, 9]] *= Cfg.control.hip_scale_reduction
     return scaled + base_env.default_dof_pos
 
 
@@ -230,8 +236,8 @@ def print_joint_angle_table(
     base_env,
 ) -> None:
     obs0 = obs[0]
-    default_q = base_env.default_dof_pos[0]
-    input_q = default_q + obs0[6:18] / Cfg.normalization.obs_scales.dof_pos
+    default_q = base_env.default_dof_pos
+    input_q = obs0[OBSERVATION_SLICES["dof_pos"]]
     output_q = target_q[0]
     delta_q = output_q - default_q
 
@@ -259,8 +265,8 @@ def print_probe(
     angles_only: bool = False,
 ) -> torch.Tensor:
     with torch.no_grad():
-        latent = actor_critic.adaptation_module(history)
-        action = actor_critic.actor_body(torch.cat((obs, latent), dim=-1))
+        estimator_output = actor_critic.estimate(obs)
+        action = actor_critic.actor_body(torch.cat((obs, estimator_output), dim=-1))
     target_q = action_to_target_q(base_env, action)
 
     if angles_only:
@@ -270,12 +276,14 @@ def print_probe(
     obs0 = obs[0]
     print(f"\n===== {name} =====")
     print(f"obs.shape={tuple(obs.shape)}, history.shape={tuple(history.shape)}")
-    print(f"projected_gravity obs[0:3]     = {npfmt(obs0[0:3])}")
-    print(f"command_scaled obs[3:6]        = {npfmt(obs0[3:6])}")
-    print(f"q_minus_default obs[6:18]      = {npfmt(obs0[6:18])}")
-    print(f"qd_scaled obs[18:30]           = {npfmt(obs0[18:30])}")
-    print(f"last_action obs[30:42]         = {npfmt(obs0[30:42])}")
-    print(f"latent                         = {npfmt(latent[0])}")
+    print(f"base_quat                      = {npfmt(obs0[OBSERVATION_SLICES['base_quat']])}")
+    print(f"base_ang_vel                   = {npfmt(obs0[OBSERVATION_SLICES['base_ang_vel']])}")
+    print(f"dof_pos                        = {npfmt(obs0[OBSERVATION_SLICES['dof_pos']])}")
+    print(f"dof_vel                        = {npfmt(obs0[OBSERVATION_SLICES['dof_vel']])}")
+    print(f"previous_q_des                 = {npfmt(obs0[OBSERVATION_SLICES['previous_desired_joint_positions']])}")
+    print(f"foot_positions_body            = {npfmt(obs0[OBSERVATION_SLICES['foot_positions_body']])}")
+    print(f"commands                       = {npfmt(obs0[OBSERVATION_SLICES['commands']])}")
+    print(f"estimator_output               = {npfmt(estimator_output[0])}")
     print(f"action                         = {npfmt(action[0])}")
     print(f"action_norm                    = {float(torch.norm(action[0])):.6f}")
     print(f"target_q                       = {npfmt(target_q[0])}")
@@ -284,13 +292,14 @@ def print_probe(
 
 
 def compare_jit(run_dir: Path, obs: torch.Tensor, history: torch.Tensor, actor_action: torch.Tensor) -> None:
-    adaptation = torch.jit.load(str(run_dir / "checkpoints" / "adaptation_module_latest.jit"), map_location=obs.device)
+    del history
+    estimator = torch.jit.load(str(run_dir / "checkpoints" / "estimator_latest.jit"), map_location=obs.device)
     body = torch.jit.load(str(run_dir / "checkpoints" / "body_latest.jit"), map_location=obs.device)
-    adaptation.eval()
+    estimator.eval()
     body.eval()
     with torch.no_grad():
-        latent = adaptation(history)
-        jit_action = body(torch.cat((obs, latent), dim=-1))
+        estimator_output = estimator(obs)
+        jit_action = body(torch.cat((obs, estimator_output), dim=-1))
     print("\n===== JIT comparison on repeat_history =====")
     print(f"jit_action                     = {npfmt(jit_action[0])}")
     print(f"max_abs_diff(actor, jit)       = {float(torch.max(torch.abs(actor_action - jit_action))):.9f}")
@@ -390,7 +399,7 @@ def main() -> None:
             + ", ".join(f"{name}:{value * 180.0 / np.pi:.2f}" for name, value in hip_pose)
         )
     if not args.angles_only:
-        print(f"default_dof_pos                 = {npfmt(base_env.default_dof_pos[0])}")
+        print(f"default_dof_pos                 = {npfmt(base_env.default_dof_pos)}")
         print(f"root_state                      = {npfmt(base_env.root_states[0])}")
         print(f"commands                        = {npfmt(base_env.commands[0])}")
         print(f"projected_gravity tensor        = {npfmt(base_env.projected_gravity[0])}")

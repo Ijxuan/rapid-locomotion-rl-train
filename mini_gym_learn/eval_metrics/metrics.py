@@ -57,9 +57,9 @@ def froude_number(env, actor_critic, obs):
 
 def adaptation_loss(env, actor_critic, obs):
     import torch
-    if hasattr(actor_critic, "adaptation_module"):
-        pred = actor_critic.adaptation_module(obs["obs_history"])
-        target = actor_critic.env_factor_encoder(obs["privileged_obs"])
+    if hasattr(actor_critic, "estimator"):
+        pred = actor_critic.estimate(obs["obs"])
+        target = obs["privileged_obs"]
         return torch.mean((pred.cpu().detach() - target.cpu().detach()) ** 2, dim=1)
 
 
@@ -81,7 +81,7 @@ def privileged_obs(env, actor_critic, obs):
 
 
 def latents(env, actor_critic, obs):
-    return actor_critic.env_factor_encoder(obs["privileged_obs"]).cpu().numpy()
+    return actor_critic.estimate(obs["obs"]).detach().cpu().numpy()
 
 
 METRICS_FNS = {name: fn for name, fn in locals().items() if name not in ['to_numpy'] and "__" not in name}

@@ -62,8 +62,12 @@ def load_env(headless=False):
     Cfg.domain_rand.randomize_base_mass = False
     Cfg.domain_rand.randomize_Kd_factor = False
     Cfg.domain_rand.randomize_Kp_factor = False
+    Cfg.domain_rand.randomize_motor_friction = False
+    Cfg.domain_rand.randomize_pd_gains = False
+    Cfg.domain_rand.randomize_foot_radius = False
     Cfg.domain_rand.randomize_joint_friction = False
     Cfg.domain_rand.randomize_com_displacement = False
+    Cfg.noise.add_noise = False
 
     Cfg.env.num_recording_envs = 1
     Cfg.env.num_envs = 1
