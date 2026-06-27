@@ -44,6 +44,14 @@ def make_env(num_envs: int, sim_device: str):
     return env, wrapped
 
 
+def destroy_env(base_env) -> None:
+    if getattr(base_env, "viewer", None) is not None:
+        base_env.gym.destroy_viewer(base_env.viewer)
+    if getattr(base_env, "sim", None) is not None:
+        base_env.gym.destroy_sim(base_env.sim)
+        base_env.sim = None
+
+
 def assert_finite(name: str, tensor: torch.Tensor) -> None:
     if not torch.isfinite(tensor).all():
         raise AssertionError(f"{name} contains non-finite values")
@@ -69,53 +77,58 @@ def check_env(num_envs: int, sim_device: str):
 
 def check_steps(num_envs: int, sim_device: str, steps: int):
     base_env, env = check_env(num_envs, sim_device)
-    actions = torch.zeros(num_envs, Cfg.env.num_actions, device=base_env.device)
-    for step in range(steps):
-        obs, rew, done, info = env.step(actions)
-        assert_finite(f"step {step} obs", obs["obs"])
-        assert_finite(f"step {step} reward", rew)
-        if "privileged_obs" not in obs:
-            raise AssertionError("wrapped step did not return privileged_obs")
+    try:
+        actions = torch.zeros(num_envs, Cfg.env.num_actions, device=base_env.device)
+        for step in range(steps):
+            obs, rew, done, info = env.step(actions)
+            assert_finite(f"step {step} obs", obs["obs"])
+            assert_finite(f"step {step} reward", rew)
+            if "privileged_obs" not in obs:
+                raise AssertionError("wrapped step did not return privileged_obs")
 
-    old_reset = base_env.reset_buf.clone()
-    old_timeout = base_env.time_out_buf.clone()
-    base_env.reset_buf[:] = 1
-    base_env.time_out_buf[:] = False
-    terminal_penalty = base_env._reward_termination() * base_env.cfg.rewards.paper_b_termination_penalty
-    base_env.reset_buf[:] = old_reset
-    base_env.time_out_buf[:] = old_timeout
-    if not torch.allclose(terminal_penalty, torch.full_like(terminal_penalty, -10.0)):
-        raise AssertionError(f"terminal penalty mismatch: {terminal_penalty[:4]}")
+        old_reset = base_env.reset_buf.clone()
+        old_timeout = base_env.time_out_buf.clone()
+        base_env.reset_buf[:] = 1
+        base_env.time_out_buf[:] = False
+        terminal_penalty = base_env._reward_termination() * base_env.cfg.rewards.paper_b_termination_penalty
+        base_env.reset_buf[:] = old_reset
+        base_env.time_out_buf[:] = old_timeout
+        if not torch.allclose(terminal_penalty, torch.full_like(terminal_penalty, -10.0)):
+            raise AssertionError(f"terminal penalty mismatch: {terminal_penalty[:4]}")
 
-    print("step smoke OK; reward finite; terminal penalty=-10")
-    return base_env, env
+        print("step smoke OK; reward finite; terminal penalty=-10")
+    finally:
+        destroy_env(base_env)
 
 
 def check_command_and_dr(num_envs: int, sim_device: str, resamples: int):
     base_env, env = check_env(num_envs, sim_device)
     del env
-    env_ids = torch.arange(num_envs, device=base_env.device)
-    zero_count = 0
-    total_count = 0
-    for _ in range(resamples):
-        base_env._resample_commands(env_ids)
-        zero_count += int((torch.norm(base_env.commands[:, :3], dim=1) == 0).sum().item())
-        total_count += num_envs
-    zero_ratio = zero_count / max(1, total_count)
+    try:
+        env_ids = torch.arange(num_envs, device=base_env.device)
+        zero_count = 0
+        total_count = 0
+        for _ in range(resamples):
+            base_env._resample_commands(env_ids)
+            zero_count += int((torch.norm(base_env.commands[:, :3], dim=1) == 0).sum().item())
+            total_count += num_envs
+        zero_ratio = zero_count / max(1, total_count)
 
-    for name in ("motor_frictions", "Kp_additive", "Kd_additive", "paper_b_foot_radii"):
-        assert hasattr(base_env, name), name
-        assert_finite(name, getattr(base_env, name))
+        for name in ("motor_frictions", "Kp_additive", "Kd_additive", "paper_b_foot_radii"):
+            assert hasattr(base_env, name), name
+            assert_finite(name, getattr(base_env, name))
 
-    print(f"zero command ratio: {zero_ratio:.3f}")
-    if not 0.03 <= zero_ratio <= 0.20:
-        raise AssertionError(f"zero command ratio outside smoke range: {zero_ratio:.3f}")
-    print("DR buffers finite")
-    return zero_ratio
+        print(f"zero command ratio: {zero_ratio:.3f}")
+        if not 0.03 <= zero_ratio <= 0.20:
+            raise AssertionError(f"zero command ratio outside smoke range: {zero_ratio:.3f}")
+        print("DR buffers finite")
+        return zero_ratio
+    finally:
+        destroy_env(base_env)
 
 
 def check_ppo(num_envs: int, sim_device: str, iterations: int, steps_per_iter: int):
-    _, env = make_env(num_envs, sim_device)
+    base_env, env = make_env(num_envs, sim_device)
     RunnerArgs.num_steps_per_env = steps_per_iter
     PPO_Args.num_learning_epochs = 1
     PPO_Args.num_mini_batches = 1
@@ -127,28 +140,31 @@ def check_ppo(num_envs: int, sim_device: str, iterations: int, steps_per_iter: i
     privileged_obs = obs_dict["privileged_obs"].to(sim_device)
     obs_history = obs_dict["obs_history"].to(sim_device)
 
-    for iteration in range(iterations):
-        with torch.inference_mode():
-            for _ in range(steps_per_iter):
-                actions = alg.act(obs, privileged_obs, obs_history)
-                obs_dict, rewards, dones, infos = env.step(actions)
-                obs = obs_dict["obs"].to(sim_device)
-                privileged_obs = obs_dict["privileged_obs"].to(sim_device)
-                obs_history = obs_dict["obs_history"].to(sim_device)
-                alg.process_env_step(rewards.to(sim_device), dones.to(sim_device), infos)
-            alg.compute_returns(obs, privileged_obs)
-        value_loss, surrogate_loss, estimator_loss = alg.update()
-        for name, value in {
-            "value_loss": value_loss,
-            "surrogate_loss": surrogate_loss,
-            "estimator_loss": estimator_loss,
-        }.items():
-            if not torch.isfinite(torch.tensor(value)):
-                raise AssertionError(f"{name} is not finite: {value}")
-        print(
-            f"ppo iteration {iteration}: "
-            f"value_loss={value_loss:.6f}, surrogate_loss={surrogate_loss:.6f}, estimator_loss={estimator_loss:.6f}"
-        )
+    try:
+        for iteration in range(iterations):
+            with torch.inference_mode():
+                for _ in range(steps_per_iter):
+                    actions = alg.act(obs, privileged_obs, obs_history)
+                    obs_dict, rewards, dones, infos = env.step(actions)
+                    obs = obs_dict["obs"].to(sim_device)
+                    privileged_obs = obs_dict["privileged_obs"].to(sim_device)
+                    obs_history = obs_dict["obs_history"].to(sim_device)
+                    alg.process_env_step(rewards.to(sim_device), dones.to(sim_device), infos)
+                alg.compute_returns(obs, privileged_obs)
+            value_loss, surrogate_loss, estimator_loss = alg.update()
+            for name, value in {
+                "value_loss": value_loss,
+                "surrogate_loss": surrogate_loss,
+                "estimator_loss": estimator_loss,
+            }.items():
+                if not torch.isfinite(torch.tensor(value)):
+                    raise AssertionError(f"{name} is not finite: {value}")
+            print(
+                f"ppo iteration {iteration}: "
+                f"value_loss={value_loss:.6f}, surrogate_loss={surrogate_loss:.6f}, estimator_loss={estimator_loss:.6f}"
+            )
+    finally:
+        destroy_env(base_env)
 
 
 def check_jit():
@@ -184,7 +200,8 @@ def parse_args():
 def main():
     args = parse_args()
     if args.check in {"env", "all"}:
-        check_env(args.num_envs, args.sim_device)
+        base_env, _ = check_env(args.num_envs, args.sim_device)
+        destroy_env(base_env)
     if args.check in {"steps", "all"}:
         check_steps(args.num_envs, args.sim_device, args.steps)
     if args.check in {"command-dr", "all"}:

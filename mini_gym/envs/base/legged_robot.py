@@ -91,12 +91,16 @@ class LeggedRobot(BaseTask):
             self.cfg.noise.add_noise = False
             self.cfg.domain_rand.push_robots = False
             self.cfg.domain_rand.randomize_friction = False
+            self.cfg.domain_rand.randomize_motor_friction = False
+            self.cfg.domain_rand.randomize_pd_gains = False
+            self.cfg.domain_rand.randomize_foot_radius = False
             self.cfg.env.episode_length_s = 100
             self.cfg.commands.lin_vel_x = [0, 0]
             self.cfg.commands.lin_vel_y = [0, 0]
             self.cfg.commands.ang_vel_yaw = [0, 0]
             self.cfg.commands.heading = [0, 0]
             self.cfg.commands.heading_command = False
+            self.cfg.commands.paper_b_command_curriculum = False
 
         if self.headless == False:
             self.gym.destroy_viewer(self.viewer)

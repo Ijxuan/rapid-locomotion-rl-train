@@ -27,12 +27,16 @@ class VelocityTrackingEasyEnv(LeggedRobot):
             cfg.noise.add_noise = False
             cfg.domain_rand.push_robots = False
             cfg.domain_rand.randomize_friction = False
+            cfg.domain_rand.randomize_motor_friction = False
+            cfg.domain_rand.randomize_pd_gains = False
+            cfg.domain_rand.randomize_foot_radius = False
             cfg.env.episode_length_s = 100
-            cfg.commands.ranges.lin_vel_x = [0, 0]
-            cfg.commands.ranges.lin_vel_y = [0, 0]
-            cfg.commands.ranges.ang_vel_yaw = [0, 0]
-            cfg.commands.ranges.heading = [0, 0]
+            cfg.commands.lin_vel_x = [0, 0]
+            cfg.commands.lin_vel_y = [0, 0]
+            cfg.commands.ang_vel_yaw = [0, 0]
+            cfg.commands.heading = [0, 0]
             cfg.commands.heading_command = False
+            cfg.commands.paper_b_command_curriculum = False
 
         sim_params = gymapi.SimParams()
         gymutil.parse_sim_config(vars(cfg.sim), sim_params)

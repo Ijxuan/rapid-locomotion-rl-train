@@ -14,7 +14,6 @@ assert isaacgym
 
 import numpy as np
 import torch
-from isaacgym.torch_utils import quat_rotate_inverse
 
 from mini_gym.envs import *  # noqa: F401,F403
 from mini_gym.envs.base.paper_b_observation import OBSERVATION_SLICES
@@ -22,6 +21,7 @@ from mini_gym.envs.base.legged_robot_config import Cfg
 from mini_gym.envs.mini_cheetah.mini_cheetah_config import config_mini_cheetah
 from mini_gym.envs.mini_cheetah.velocity_tracking import VelocityTrackingEasyEnv
 from mini_gym.envs.wrappers.history_wrapper import HistoryWrapper
+from mini_gym.utils.torch_utils import quat_rotate_inverse
 from mini_gym_learn.ppo import RunnerArgs
 from mini_gym_learn.ppo.actor_critic import AC_Args, ActorCritic
 from mini_gym_learn.ppo.ppo import PPO_Args
