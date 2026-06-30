@@ -68,6 +68,26 @@ class RapidLocomotionDeployTest(unittest.TestCase):
         np.testing.assert_allclose(history.joint_velocity_history[:ACTION_DIM], np.ones(ACTION_DIM))
         np.testing.assert_allclose(history.previous_desired_joint_positions[:ACTION_DIM], DEFAULT_Q_POLICY + 0.2)
 
+    def test_observation_history_uses_paper_b_sparse_joint_delays(self):
+        history = ObservationHistory()
+
+        for step in range(7):
+            q = DEFAULT_Q_POLICY + float(step)
+            qd = np.ones(ACTION_DIM, dtype=np.float32) * float(step)
+            history.update_joint_state(q, qd)
+
+        expected_errors = np.concatenate(
+            [
+                np.ones(ACTION_DIM, dtype=np.float32) * 4.0,
+                np.ones(ACTION_DIM, dtype=np.float32) * 2.0,
+                np.ones(ACTION_DIM, dtype=np.float32) * 0.0,
+            ]
+        )
+        expected_velocities = expected_errors.copy()
+
+        np.testing.assert_allclose(history.joint_position_error_history, expected_errors)
+        np.testing.assert_allclose(history.joint_velocity_history, expected_velocities)
+
     def test_policy_robot_mapping_matches_training_dof_order(self):
         values = np.arange(ACTION_DIM, dtype=np.float32)
         expected_policy = np.array([3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8], dtype=np.float32)

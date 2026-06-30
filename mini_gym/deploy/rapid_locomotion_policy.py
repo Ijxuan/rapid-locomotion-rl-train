@@ -133,19 +133,46 @@ class ObservationHistory:
         default_factory=lambda: np.zeros(ACTION_DIM * 3, dtype=np.float32))
     joint_velocity_history: np.ndarray = field(
         default_factory=lambda: np.zeros(ACTION_DIM * 3, dtype=np.float32))
+    joint_history_delay_line_steps: int = 7
+    joint_history_sparse_indices: tuple[int, int, int] = (4, 2, 0)
+    _joint_position_error_delay_line: np.ndarray = field(init=False, repr=False)
+    _joint_velocity_delay_line: np.ndarray = field(init=False, repr=False)
+    _joint_state_initialized: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._joint_position_error_delay_line = np.zeros(
+            (self.joint_history_delay_line_steps, ACTION_DIM), dtype=np.float32)
+        self._joint_velocity_delay_line = np.zeros_like(self._joint_position_error_delay_line)
 
     def reset(self) -> None:
         self.previous_desired_joint_positions[:] = np.tile(DEFAULT_Q_POLICY, 2)
         self.joint_position_error_history.fill(0.0)
         self.joint_velocity_history.fill(0.0)
+        self._joint_position_error_delay_line.fill(0.0)
+        self._joint_velocity_delay_line.fill(0.0)
+        self._joint_state_initialized = False
 
     def update_joint_state(self, q_policy: Iterable[float], qd_policy: Iterable[float]) -> None:
         q_policy = _array(q_policy, ACTION_DIM, "q_policy")
         qd_policy = _array(qd_policy, ACTION_DIM, "qd_policy")
-        self.joint_position_error_history[ACTION_DIM:] = self.joint_position_error_history[:-ACTION_DIM]
-        self.joint_position_error_history[:ACTION_DIM] = q_policy - DEFAULT_Q_POLICY
-        self.joint_velocity_history[ACTION_DIM:] = self.joint_velocity_history[:-ACTION_DIM]
-        self.joint_velocity_history[:ACTION_DIM] = qd_policy
+        joint_error = q_policy - DEFAULT_Q_POLICY
+
+        if not self._joint_state_initialized:
+            self._joint_position_error_delay_line[:] = joint_error
+            self._joint_velocity_delay_line[:] = qd_policy
+            self._joint_state_initialized = True
+        else:
+            self._joint_position_error_delay_line[:-1] = self._joint_position_error_delay_line[1:].copy()
+            self._joint_position_error_delay_line[-1] = joint_error
+            self._joint_velocity_delay_line[:-1] = self._joint_velocity_delay_line[1:].copy()
+            self._joint_velocity_delay_line[-1] = qd_policy
+
+        self.joint_position_error_history[:] = self._joint_position_error_delay_line[
+            list(self.joint_history_sparse_indices)
+        ].reshape(-1)
+        self.joint_velocity_history[:] = self._joint_velocity_delay_line[
+            list(self.joint_history_sparse_indices)
+        ].reshape(-1)
 
     def update_desired_joint_positions(self, target_q: Iterable[float]) -> None:
         target_q = _array(target_q, ACTION_DIM, "target_q")
