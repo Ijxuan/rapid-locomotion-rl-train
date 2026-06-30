@@ -24,9 +24,6 @@ KD = 0.4
 
 DEFAULT_Q_POLICY = np.array(
     [
-        0.1,
-        -0.8,
-        1.62,
         -0.1,
         -0.8,
         1.62,
@@ -34,14 +31,17 @@ DEFAULT_Q_POLICY = np.array(
         -0.8,
         1.62,
         -0.1,
+        -0.8,
+        1.62,
+        0.1,
         -0.8,
         1.62,
     ],
     dtype=np.float32,
 )
 
-POLICY_LEG_ORDER = ("FL", "FR", "RL", "RR")
 ROBOT_LEG_ORDER = ("FR", "FL", "RR", "RL")
+POLICY_LEG_ORDER = ROBOT_LEG_ORDER
 POLICY_DOF_NAMES = tuple(
     f"{leg}_{joint}_joint"
     for leg in POLICY_LEG_ORDER

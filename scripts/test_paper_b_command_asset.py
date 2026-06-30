@@ -47,12 +47,14 @@ class PaperBCommandAssetTest(unittest.TestCase):
                 self.assertTrue(Path(variant).exists())
                 self.assertAlmostEqual(foot_sphere_radius_from_urdf(variant), radius)
 
-    def test_mini_cheetah_config_source_uses_sphere_foot_asset(self):
+    def test_mini_cheetah_config_source_uses_standard_asset(self):
         source = (Path(__file__).resolve().parents[1]
                   / "mini_gym/envs/mini_cheetah/mini_cheetah_config.py").read_text(encoding="utf-8")
 
-        self.assertIn("mini_cheetah_simple.urdf", source)
-        self.assertIn('_.foot_name = "_foot"', source)
+        self.assertIn("mini_cheetah.urdf", source)
+        self.assertNotIn("mini_cheetah_simple.urdf", source)
+        self.assertIn('_.foot_name = "calf"', source)
+        self.assertIn("_.randomize_foot_radius = False", source)
         self.assertIn("_.collapse_fixed_joints = False", source)
 
     def test_legged_robot_source_assigns_radius_asset_buckets_per_env(self):

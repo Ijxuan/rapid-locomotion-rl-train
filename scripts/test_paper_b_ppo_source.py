@@ -70,8 +70,9 @@ class PaperBPpoSourceTest(unittest.TestCase):
 
         self.assertIn("def apply_2070_profile", source)
         self.assertIn('parser.add_argument("-2070", "--rtx2070"', source)
-        self.assertIn("Cfg.env.num_envs = 128", source)
+        self.assertIn("Cfg.env.num_envs = 32", source)
         self.assertIn("RunnerArgs.num_steps_per_env = 16", source)
+        self.assertIn("Cfg.terrain.num_cols = 32", source)
         self.assertIn("Cfg.sim.physx.max_gpu_contact_pairs = 2 ** 20", source)
         self.assertIn("Cfg.sim.physx.default_buffer_size_multiplier = 5", source)
         self.assertIn('low_memory_profile="2070" if profile_2070 else "default"', source)

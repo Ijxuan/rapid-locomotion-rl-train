@@ -40,8 +40,8 @@ def config_mini_cheetah(Cnfg: Union[Cfg, Meta]):
     _.decimation = 4
 
     _ = Cnfg.asset
-    _.file = '{MINI_GYM_ROOT_DIR}/resources/robots/mini_cheetah/urdf/mini_cheetah_simple.urdf'
-    _.foot_name = "_foot"
+    _.file = '{MINI_GYM_ROOT_DIR}/resources/robots/mini_cheetah/urdf/mini_cheetah.urdf'
+    _.foot_name = "calf"
     _.penalize_contacts_on = []
     _.terminate_after_contacts_on = ["base", "trunk"]
     _.collapse_fixed_joints = False
@@ -121,6 +121,6 @@ def config_mini_cheetah(Cnfg: Union[Cfg, Meta]):
     _.randomize_pd_gains = True
     _.Kp_noise_range = [-2.0, 2.0]
     _.Kd_noise_range = [-0.1, 0.1]
-    _.randomize_foot_radius = True
+    _.randomize_foot_radius = False
     _.foot_radius_range = [0.006, 0.010]
     _.rand_interval_s = 6

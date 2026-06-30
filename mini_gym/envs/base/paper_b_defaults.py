@@ -80,7 +80,7 @@ def apply_paper_b_common_defaults(cfg):
     cfg.domain_rand.randomize_pd_gains = True
     cfg.domain_rand.Kp_noise_range = [-2.0, 2.0]
     cfg.domain_rand.Kd_noise_range = [-0.1, 0.1]
-    cfg.domain_rand.randomize_foot_radius = True
+    cfg.domain_rand.randomize_foot_radius = False
     cfg.domain_rand.foot_radius_range = [0.006, 0.010]
     cfg.domain_rand.foot_position_noise_range = [[-0.010, 0.010], [-0.005, 0.005], [-0.020, 0.020]]
     cfg.domain_rand.obs_noise_dof_pos = [-0.05, 0.05]
@@ -100,7 +100,7 @@ def apply_paper_b_common_defaults(cfg):
 
     if hasattr(cfg, "asset"):
         cfg.asset.terminate_after_contacts_on = ["base", "trunk"]
-        cfg.asset.foot_name = "_foot"
+        cfg.asset.foot_name = "calf"
         cfg.asset.collapse_fixed_joints = False
 
 

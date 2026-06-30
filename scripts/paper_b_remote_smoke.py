@@ -73,8 +73,9 @@ def check_env(num_envs: int, sim_device: str):
     assert tuple(actor_obs.shape) == (num_envs, 142)
     assert tuple(privileged_obs.shape) == (num_envs, 11)
     feet_names = getattr(base_env, "feet_names", [])
-    if len(feet_names) != 4 or not all(name.endswith("_foot") for name in feet_names):
-        raise AssertionError(f"expected four *_foot bodies, got {feet_names}")
+    foot_name = Cfg.asset.foot_name
+    if len(feet_names) != 4 or not all(foot_name in name for name in feet_names):
+        raise AssertionError(f"expected four {foot_name} bodies, got {feet_names}")
     termination_names = getattr(base_env, "termination_contact_names", [])
     if len(termination_names) == 0:
         raise AssertionError("expected at least one body contact termination link")

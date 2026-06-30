@@ -5,10 +5,10 @@ assert isaacgym
 
 def apply_2070_profile(Cfg, RunnerArgs):
     """Reduce Isaac Gym and rollout buffers for smaller GPUs."""
-    Cfg.env.num_envs = 128
+    Cfg.env.num_envs = 32
     Cfg.env.record_video = False
     Cfg.terrain.num_rows = 1
-    Cfg.terrain.num_cols = 1
+    Cfg.terrain.num_cols = 32
     Cfg.terrain.border_size = 0
     Cfg.terrain.curriculum = False
     Cfg.sim.physx.max_gpu_contact_pairs = 2 ** 20

@@ -29,17 +29,17 @@ from scripts.rl_lcm_policy import resolve_checkpoint
 class RapidLocomotionDeployTest(unittest.TestCase):
     def test_deploy_policy_order_matches_mini_cheetah_training_config(self):
         expected_dof_names = (
-            "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
             "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
-            "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
+            "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
             "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
+            "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
         )
         expected_default_q = np.array(
-            [0.1, -0.8, 1.62, -0.1, -0.8, 1.62, 0.1, -0.8, 1.62, -0.1, -0.8, 1.62],
+            [-0.1, -0.8, 1.62, 0.1, -0.8, 1.62, -0.1, -0.8, 1.62, 0.1, -0.8, 1.62],
             dtype=np.float32,
         )
 
-        self.assertEqual(POLICY_LEG_ORDER, ("FL", "FR", "RL", "RR"))
+        self.assertEqual(POLICY_LEG_ORDER, ("FR", "FL", "RR", "RL"))
         self.assertEqual(ROBOT_LEG_ORDER, ("FR", "FL", "RR", "RL"))
         self.assertEqual(POLICY_DOF_NAMES, expected_dof_names)
         np.testing.assert_allclose(DEFAULT_Q_POLICY, expected_default_q)
@@ -133,14 +133,14 @@ class RapidLocomotionDeployTest(unittest.TestCase):
 
     def test_policy_robot_mapping_matches_training_dof_order(self):
         values = np.arange(ACTION_DIM, dtype=np.float32)
-        expected_policy = np.array([3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8], dtype=np.float32)
-        expected_robot = np.array([3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8], dtype=np.float32)
+        expected_policy = values
+        expected_robot = values
         np.testing.assert_allclose(robot_to_policy_order(values), expected_policy)
         np.testing.assert_allclose(policy_to_robot_order(values), expected_robot)
 
     def test_foot_position_mapping_matches_training_foot_order(self):
         values = np.arange(12, dtype=np.float32)
-        expected_policy = np.array([3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8], dtype=np.float32)
+        expected_policy = values
 
         np.testing.assert_allclose(robot_foot_positions_to_policy_order(values), expected_policy)
         np.testing.assert_allclose(policy_foot_positions_to_robot_order(values), expected_policy)

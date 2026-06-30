@@ -129,10 +129,10 @@ class PaperBLayoutTest(unittest.TestCase):
         self.assertTrue(cfg.domain_rand.randomize_friction)
         self.assertTrue(cfg.domain_rand.randomize_motor_friction)
         self.assertTrue(cfg.domain_rand.randomize_pd_gains)
-        self.assertTrue(cfg.domain_rand.randomize_foot_radius)
+        self.assertFalse(cfg.domain_rand.randomize_foot_radius)
         self.assertEqual(cfg.domain_rand.motor_friction_haa_hfe_range, [0.0, 0.3])
         self.assertEqual(cfg.domain_rand.motor_friction_kfe_range, [0.1, 0.7])
-        self.assertEqual(cfg.asset.foot_name, "_foot")
+        self.assertEqual(cfg.asset.foot_name, "calf")
         self.assertEqual(cfg.asset.terminate_after_contacts_on, ["base", "trunk"])
         self.assertFalse(cfg.asset.collapse_fixed_joints)
 

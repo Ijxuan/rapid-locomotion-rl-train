@@ -11,7 +11,8 @@
 * 训练导出两个 TorchScript 文件：`estimator_latest.jit` 和 `body_latest.jit`。
 * reward 聚合使用论文 B 公式：`r_total = r_pos * exp(0.2 * r_neg)`。
 * Mini Cheetah 默认配置为 800 env、100 Hz policy、`action_scale=0.1`、`Kp=17`、`Kd=0.4`。
-* command curriculum、初始状态随机化、25% previous-final-state reset、ground friction、observation noise、motor dry friction、PD additive noise、sphere-foot radius 随机化均按论文 B 路径接入。
+* command curriculum、初始状态随机化、25% previous-final-state reset、ground friction、observation noise、motor dry friction、PD additive noise 均按论文 B 路径接入。
+* 当前默认使用标准 Mini Cheetah mesh URDF：`resources/robots/mini_cheetah/urdf/mini_cheetah.urdf`。在训练出可用策略前，sphere-foot 简化模型和 foot radius 随机化暂时关闭。
 
 ## 关键文件
 
@@ -121,7 +122,7 @@ git pull
 conda activate gym4
 ```
 
-最小环境检查：创建指定数量的 env，`reset()` 后确认 observation shape 为 142、privileged target shape 为 11，并检查 `*_foot` body 和 terminal contact 配置。
+最小环境检查：创建指定数量的 env，`reset()` 后确认 observation shape 为 142、privileged target shape 为 11，并检查标准模型的 `*_calf` 脚端 body 和 terminal contact 配置。
 
 ```bash
 python scripts/paper_b_remote_smoke.py --check env --num-envs 8 --sim-device cuda:0
@@ -201,10 +202,10 @@ python scripts/train.py -2070 --headless --sim-device cuda:0 --iterations 10
 
 `-2070` profile 当前会使用：
 
-* `Cfg.env.num_envs = 128`
+* `Cfg.env.num_envs = 32`
 * `RunnerArgs.num_steps_per_env = 16`
 * `Cfg.terrain.num_rows = 1`
-* `Cfg.terrain.num_cols = 1`
+* `Cfg.terrain.num_cols = 32`
 * `Cfg.terrain.border_size = 0`
 * `Cfg.sim.physx.max_gpu_contact_pairs = 2 ** 20`
 * `Cfg.sim.physx.default_buffer_size_multiplier = 5`
