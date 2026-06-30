@@ -65,11 +65,25 @@ def check_env(num_envs: int, sim_device: str):
 
     print("obs shape:", tuple(actor_obs.shape))
     print("privileged shape:", tuple(privileged_obs.shape))
+    print("feet names:", getattr(base_env, "feet_names", []))
     print("feet indices:", base_env.feet_indices.detach().cpu().tolist())
+    print("termination names:", getattr(base_env, "termination_contact_names", []))
     print("termination indices:", base_env.termination_contact_indices.detach().cpu().tolist())
 
     assert tuple(actor_obs.shape) == (num_envs, 142)
     assert tuple(privileged_obs.shape) == (num_envs, 11)
+    feet_names = getattr(base_env, "feet_names", [])
+    if len(feet_names) != 4 or not all(name.endswith("_foot") for name in feet_names):
+        raise AssertionError(f"expected four *_foot bodies, got {feet_names}")
+    termination_names = getattr(base_env, "termination_contact_names", [])
+    if len(termination_names) == 0:
+        raise AssertionError("expected at least one body contact termination link")
+    bad_termination_names = [
+        name for name in termination_names
+        if any(part in name.lower() for part in ("foot", "calf", "thigh", "knee"))
+    ]
+    if bad_termination_names:
+        raise AssertionError(f"leg/foot links should not terminate episodes: {bad_termination_names}")
     assert_finite("obs", actor_obs)
     assert_finite("privileged_obs", privileged_obs)
     return base_env, env
