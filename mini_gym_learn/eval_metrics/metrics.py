@@ -55,12 +55,22 @@ def froude_number(env, actor_critic, obs):
     return v ** 2 / (g * h)
 
 
-def adaptation_loss(env, actor_critic, obs):
+def estimator_loss(env, actor_critic, obs):
     import torch
     if hasattr(actor_critic, "estimator"):
         pred = actor_critic.estimate(obs["obs"])
         target = obs["privileged_obs"]
-        return torch.mean((pred.cpu().detach() - target.cpu().detach()) ** 2, dim=1)
+        state_dim = getattr(actor_critic, "estimator_state_dim", pred.shape[1] - 4)
+        state_loss = torch.mean((pred[:, :state_dim] - target[:, :state_dim]) ** 2, dim=1)
+        contact_pred = pred[:, state_dim:].clamp(1e-6, 1.0 - 1e-6)
+        contact_target = target[:, state_dim:].clamp(0.0, 1.0)
+        contact_loss = torch.nn.functional.binary_cross_entropy(
+            contact_pred, contact_target, reduction="none").mean(dim=1)
+        return (state_loss + contact_loss).cpu().detach()
+
+
+def adaptation_loss(env, actor_critic, obs):
+    return estimator_loss(env, actor_critic, obs)
 
 
 def auxiliary_rewards(env, actor_critic, obs):
@@ -69,7 +79,7 @@ def auxiliary_rewards(env, actor_critic, obs):
         name = env.reward_names[i]
         rew = env.reward_functions[i]() * env.reward_scales[name]
         rewards[name] = rew.cpu().detach()
-        return rewards
+    return rewards
 
 
 def termination(env, actor_critic, obs):
