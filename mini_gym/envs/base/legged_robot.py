@@ -3,6 +3,7 @@
 import os
 from typing import Dict
 
+import numpy as np
 from isaacgym import gymtorch, gymapi, gymutil
 
 assert gymtorch
