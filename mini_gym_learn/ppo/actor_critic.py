@@ -111,9 +111,6 @@ class ActorCritic(nn.Module):
         estimated_state = self._estimated_state_for_policy(observations)
         return torch.cat((observations, estimated_state), dim=-1)
 
-    def _actor_input_from_target(self, observations, estimator_target):
-        return torch.cat((observations, estimator_target.detach()), dim=-1)
-
     def update_distribution(self, observations, privileged_observations=None):
         del privileged_observations
         mean = self.actor_body(self._actor_input_from_estimator(observations))
@@ -144,11 +141,9 @@ class ActorCritic(nn.Module):
         return actions_mean
 
     def act_teacher(self, observations, privileged_info, policy_info={}):
-        if privileged_info is None:
-            return self.act_student(observations, None, policy_info)
-        actions_mean = self.actor_body(self._actor_input_from_target(observations, privileged_info))
-        policy_info["estimator_targets"] = privileged_info.detach().cpu().numpy()
-        return actions_mean
+        if privileged_info is not None:
+            policy_info["estimator_targets"] = privileged_info.detach().cpu().numpy()
+        return self.act_student(observations, None, policy_info)
 
     def evaluate(self, critic_observations, privileged_observations=None, **kwargs):
         del privileged_observations, kwargs
