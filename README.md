@@ -20,14 +20,14 @@ Remote Isaac Gym smoke sequence:
 git checkout paper-b-reproduction
 git pull
 
-python scripts/paper_b_remote_smoke.py --check env --num-envs 8
-python scripts/paper_b_remote_smoke.py --check steps --num-envs 8 --steps 5
-python scripts/paper_b_remote_smoke.py --check command-dr --num-envs 20 --command-resamples 20
-python scripts/paper_b_remote_smoke.py --check ppo --num-envs 8 --ppo-iters 2 --steps-per-iter 4
-python scripts/paper_b_remote_smoke.py --check jit
+python scripts/paper_b_remote_smoke.py --check env --num-envs 8 --sim-device cuda:0
+python scripts/paper_b_remote_smoke.py --check steps --num-envs 8 --steps 5 --sim-device cuda:0
+python scripts/paper_b_remote_smoke.py --check command-dr --num-envs 20 --command-resamples 20 --sim-device cuda:0
+python scripts/paper_b_remote_smoke.py --check ppo --num-envs 8 --ppo-iters 2 --steps-per-iter 4 --sim-device cuda:0
+python scripts/paper_b_remote_smoke.py --check jit --sim-device cuda:0
 
 # Or run the full smoke suite in one command:
-python scripts/paper_b_remote_smoke.py --check all --num-envs 8
+python scripts/paper_b_remote_smoke.py --check all --num-envs 8 --sim-device cuda:0
 ```
 
 Training uses the Paper B Mini Cheetah config by default. Use `python scripts/train.py --headless --sim-device cuda:0`, or pass `--show` to open the Isaac Gym viewer. `scripts/play.py`, `scripts/play_zero_probe.py`, and deployment load `estimator_latest.jit` plus `body_latest.jit`.

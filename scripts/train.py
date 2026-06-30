@@ -1,7 +1,9 @@
-def train_mc(headless=True, sim_device="cuda:0", num_learning_iterations=4000):
+import isaacgym
 
-    import isaacgym
-    assert isaacgym
+assert isaacgym
+
+
+def train_mc(headless=True, sim_device="cuda:0", num_learning_iterations=4000):
     import torch
 
     from mini_gym.envs.base.legged_robot_config import Cfg

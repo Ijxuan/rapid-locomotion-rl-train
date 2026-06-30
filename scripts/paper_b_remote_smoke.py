@@ -182,7 +182,11 @@ def check_ppo(num_envs: int, sim_device: str, iterations: int, steps_per_iter: i
 
 
 def check_jit():
+    from scripts import train as train_script
     from scripts.play import load_jit_policy
+
+    if not callable(train_script.train_mc):
+        raise AssertionError("scripts.train.train_mc is not callable")
 
     configure_cfg(num_envs=1)
     model = ActorCritic(
