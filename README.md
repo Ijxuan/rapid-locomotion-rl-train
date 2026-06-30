@@ -1,210 +1,304 @@
-# Paper B Mini Cheetah Reproduction Branch
+# Paper B Mini Cheetah 复现分支
 
-This branch keeps the original rapid-locomotion training framework and Mini Cheetah assets, but changes the Mini Cheetah task toward Ji et al. "Concurrent Training of a Control Policy and a State Estimator" (RA-L 2022):
+本分支 `paper-b-reproduction` 基于原始 rapid-locomotion 训练框架和 Mini Cheetah 资产，改造成 Ji et al. 的论文 B：**Concurrent Training of a Control Policy and a State Estimator**（RA-L 2022）复现配置。
 
-* 142D Paper B observation and 11D estimator target/output.
-* Estimator/body JIT export as `estimator_latest.jit` and `body_latest.jit`.
-* Paper B reward aggregation `r_total = r_pos * exp(0.2 * r_neg)`.
-* Paper B command curriculum, reset noise, domain randomization, and sphere-foot asset setup.
+当前分支的主要变化：
 
-Local code-only checks that do not require Isaac Gym:
+* 观测改为论文 B 的 142 维 layout。
+* estimator 监督目标和输出为 11 维：`base_lin_vel(3) + foot_height(4) + contact_probability(4)`。
+* actor 输入为 `obs(142) + estimator_output(11) = 153` 维，输出 12 维 action。
+* actor / critic MLP 为 `[512, 256, 64]`，estimator MLP 为 `[256, 128]`。
+* 训练导出两个 TorchScript 文件：`estimator_latest.jit` 和 `body_latest.jit`。
+* reward 聚合使用论文 B 公式：`r_total = r_pos * exp(0.2 * r_neg)`。
+* Mini Cheetah 默认配置为 800 env、100 Hz policy、`action_scale=0.1`、`Kp=17`、`Kd=0.4`。
+* command curriculum、初始状态随机化、25% previous-final-state reset、ground friction、observation noise、motor dry friction、PD additive noise、sphere-foot radius 随机化均按论文 B 路径接入。
 
-```bash
-python -m unittest scripts.test_paper_b_layout scripts.test_paper_b_rewards scripts.test_paper_b_ppo_source scripts.test_paper_b_command_asset scripts.test_paper_b_eval_metrics scripts.test_rl_deploy
-python -m py_compile mini_gym/envs/base/paper_b_observation.py mini_gym/envs/base/paper_b_rewards.py mini_gym/envs/base/paper_b_commands.py mini_gym/envs/base/paper_b_assets.py mini_gym/envs/base/legged_robot.py mini_gym/envs/mini_cheetah/velocity_tracking/velocity_tracking_easy_env.py mini_gym_learn/ppo/actor_critic.py mini_gym_learn/ppo/ppo.py mini_gym_learn/ppo/rollout_storage.py mini_gym_learn/ppo/__init__.py mini_gym_learn/eval_metrics/metrics.py mini_gym/deploy/rapid_locomotion_policy.py scripts/train.py scripts/play.py scripts/play_zero_probe.py scripts/paper_b_remote_smoke.py scripts/rl_lcm_policy.py
+## 关键文件
+
+训练入口：
+
+```text
+scripts/train.py
 ```
 
-Remote Isaac Gym smoke sequence:
+远端 Isaac Gym smoke：
+
+```text
+scripts/paper_b_remote_smoke.py
+```
+
+播放 / 探针：
+
+```text
+scripts/play.py
+scripts/play_zero_probe.py
+```
+
+部署侧 observation 和 I/O 辅助：
+
+```text
+mini_gym/deploy/rapid_locomotion_policy.py
+scripts/rl_lcm_policy.py
+```
+
+Paper B 相关核心实现：
+
+```text
+mini_gym/envs/base/paper_b_observation.py
+mini_gym/envs/base/paper_b_rewards.py
+mini_gym/envs/base/paper_b_commands.py
+mini_gym/envs/base/paper_b_assets.py
+mini_gym/envs/base/paper_b_defaults.py
+mini_gym/envs/base/legged_robot.py
+mini_gym_learn/ppo/actor_critic.py
+mini_gym_learn/ppo/ppo.py
+mini_gym_learn/ppo/rollout_storage.py
+mini_gym_learn/ppo/__init__.py
+```
+
+## 环境准备
+
+进入仓库后先激活测试 / 训练环境：
+
+```bash
+cd /home/xjtx/rl/rapid-locomotion-rl-main
+conda activate gym4
+```
+
+如果当前 shell 找不到 `conda activate`，可先加载 conda：
+
+```bash
+source /opt/miniconda3/etc/profile.d/conda.sh
+conda activate gym4
+```
+
+本机可以运行不依赖 Isaac Gym 的 Python / Torch 检查。真正创建环境、reset、step、PPO smoke、正式训练都需要安装 Isaac Gym 并使用可用 NVIDIA GPU。
+
+## 本机非 Isaac 检查
+
+这些命令不会创建 Isaac Gym 环境，适合在本机先检查代码结构、shape、TorchScript 导出和部署 I/O。
+
+```bash
+python -m unittest \
+  scripts.test_paper_b_layout \
+  scripts.test_paper_b_rewards \
+  scripts.test_paper_b_ppo_source \
+  scripts.test_paper_b_command_asset \
+  scripts.test_paper_b_eval_metrics \
+  scripts.test_rl_deploy
+```
+
+静态语法检查：
+
+```bash
+python -m py_compile \
+  mini_gym/envs/base/paper_b_observation.py \
+  mini_gym/envs/base/paper_b_rewards.py \
+  mini_gym/envs/base/paper_b_commands.py \
+  mini_gym/envs/base/paper_b_assets.py \
+  mini_gym/envs/base/legged_robot.py \
+  mini_gym/envs/mini_cheetah/velocity_tracking/velocity_tracking_easy_env.py \
+  mini_gym_learn/ppo/actor_critic.py \
+  mini_gym_learn/ppo/ppo.py \
+  mini_gym_learn/ppo/rollout_storage.py \
+  mini_gym_learn/ppo/__init__.py \
+  mini_gym_learn/eval_metrics/metrics.py \
+  mini_gym/deploy/rapid_locomotion_policy.py \
+  scripts/train.py \
+  scripts/play.py \
+  scripts/play_zero_probe.py \
+  scripts/paper_b_remote_smoke.py \
+  scripts/rl_lcm_policy.py
+```
+
+## 远端 Isaac Gym Smoke
+
+在安装好 Isaac Gym 的机器上拉取当前分支：
 
 ```bash
 git checkout paper-b-reproduction
 git pull
+conda activate gym4
+```
 
+最小环境检查：创建指定数量的 env，`reset()` 后确认 observation shape 为 142、privileged target shape 为 11，并检查 `*_foot` body 和 terminal contact 配置。
+
+```bash
 python scripts/paper_b_remote_smoke.py --check env --num-envs 8 --sim-device cuda:0
-python scripts/paper_b_remote_smoke.py --check steps --num-envs 8 --steps 5 --sim-device cuda:0
-python scripts/paper_b_remote_smoke.py --check command-dr --num-envs 20 --command-resamples 20 --sim-device cuda:0
-python scripts/paper_b_remote_smoke.py --check ppo --num-envs 8 --ppo-iters 2 --steps-per-iter 4 --sim-device cuda:0
-python scripts/paper_b_remote_smoke.py --check jit --sim-device cuda:0
+```
 
-# Or run the full smoke suite in one command:
+PPO smoke：跑少量 rollout 和 update，确认 value loss、surrogate loss、estimator loss 有限。
+
+```bash
+python scripts/paper_b_remote_smoke.py --check ppo --num-envs 8 --ppo-iters 2 --steps-per-iter 4 --sim-device cuda:0
+```
+
+step smoke：跑 5 step，确认 reward finite、reset 正常、terminal penalty 为 `-10`。
+
+```bash
+python scripts/paper_b_remote_smoke.py --check steps --num-envs 8 --steps 5 --sim-device cuda:0
+```
+
+command / DR smoke：确认 10% zero-command 采样比例大致正常，DR buffer 有限。
+
+```bash
+python scripts/paper_b_remote_smoke.py --check command-dr --num-envs 20 --command-resamples 20 --sim-device cuda:0
+```
+
+JIT smoke：确认 `estimator_latest.jit` 和 `body_latest.jit` 的导出、查找、加载和 play loader 路径正确。
+
+```bash
+python scripts/paper_b_remote_smoke.py --check jit --sim-device cuda:0
+```
+
+一次性跑完整 smoke：
+
+```bash
 python scripts/paper_b_remote_smoke.py --check all --num-envs 8 --sim-device cuda:0
 ```
 
-Training uses the Paper B Mini Cheetah config by default. Use `python scripts/train.py --headless --sim-device cuda:0`, or pass `--show` to open the Isaac Gym viewer. `scripts/play.py`, `scripts/play_zero_probe.py`, and deployment load `estimator_latest.jit` plus `body_latest.jit`.
+## 怎么训练
 
-# Code for Rapid Locomotion via Reinforcement Learning
-
-This repository provides an implementation of the paper:
-
-
-<td style="padding:20px;width:75%;vertical-align:middle">
-      <a href="https://arxiv.org/pdf/2205.02824.pdf">
-      <b> Rapid Locomotion via Reinforcement Learning </b>
-      </a>
-      <br>
-      <a href="https://gmargo11.github.io/" target="_blank">Gabriel B. Margolis</a>*,  <a href="https://www.episodeyang.com/" target="_blank">Ge Yang</a>*, <a href="https://kartikpaigwar.github.io/" target="_blank">Kartik Paigwar</a>,
-      <a href="https://taochenshh.github.io/" target="_blank">Tao Chen</a>, and <a href="https://people.csail.mit.edu/pulkitag" target="_blank">Pulkit Agrawal</a>
-      <br>
-      <em>Robotics: Science and Systems</em>, 2022
-      <br>
-      <a href="https://arxiv.org/pdf/2205.02824.pdf">paper</a> /
-      <a href="#bibtex">bibtex</a> /
-      <a href="https://agility.csail.mit.edu/" target="_blank">project page</a>
-    <br>
-</td>
-
-<br>
-
-This environment builds upon the [legged gym environment](https://leggedrobotics.github.io/legged_gym/) by Nikita
-Rudin, Robotic Systems Lab, ETH Zurich (Paper: https://arxiv.org/abs/2109.11978) and the Isaac Gym simulator from 
-NVIDIA (Paper: https://arxiv.org/abs/2108.10470). Training code builds upon the 
-[rsl_rl](https://github.com/leggedrobotics/rsl_rl) repository, also by Nikita
-Rudin, Robotic Systems Lab, ETH Zurich. All redistributed code retains its
-original [license](LICENSES/legged_gym/LICENSE).
-
-Our initial release provides the following features:
-* Support for the MIT Mini Cheetah and Unitree Go1 robots.
-* Implementation of the Grid Adaptive Curriculum strategy from [RLvRL](https://arxiv.org/pdf/2205.02824.pdf).
-* Implementation of the teacher-student training approach from [RLvRL](https://arxiv.org/pdf/2205.02824.pdf), which is based on [Rapid Motor Adaptation](https://arxiv.org/abs/2107.04034).
-* Support for scaling experiment management with [ml_logger](https://github.com/geyang/ml_logger) and [jaynes](https://github.com/geyang/jaynes-starter-kit).
-
-## Quick Start
-
-**CODE STRUCTURE** The main environment for simulating a legged robot is
-in [legged_robot.py](mini_gym/envs/base/legged_robot.py). The default configuration parameters including reward
-weightings are defined in [legged_robot_config.py::Cfg](mini_gym/envs/base/legged_robot_config.py).
-
-There are three scripts in the [scripts](scripts/) directory:
+正式训练入口是：
 
 ```bash
-scripts
-├── __init__.py
-├── play.py
-├── test.py
-└── train.py
+python scripts/train.py --headless --sim-device cuda:0 --iterations 4000
 ```
 
-You can run the `test.py` script to verify your environment setup. If it runs then you have installed the gym
-environments correctly. To train an agent, run `train.py`. To evaluate a pretrained agent, run `play.py`. We provie a
-pretrained agent checkpoint in the [./runs/](.
+这条命令会使用 `config_mini_cheetah(Cfg)` 中的 Paper B 默认配置：
 
-### Option A: Using Docker
+* `Cfg.env.num_envs = 800`
+* `Cfg.env.num_observations = 142`
+* `Cfg.env.num_privileged_obs = 11`
+* `Cfg.control.action_scale = 0.1`
+* `Cfg.control.stiffness = {"joint": 17.0}`
+* `Cfg.control.damping = {"joint": 0.4}`
+* policy dt 为 0.01 s，即 100 Hz
 
-The recommended way to run the code is to use the docker image. We provide
-a [Dockerfile](docker/Dockerfile). To build the docker image, use a Ubuntu 18.04 or Ubuntu 20.04 machine, and
-follow these steps:
-
-1. Clone this repository
-2. Obtain `IsaacGym_Preview_3_Package.tar.gz` from the NVIDIA website (https://developer.nvidia.com/isaac-gym). You'll
-   have to create a free NVIDIA account. After downloading the file, place it in this repo
-   at: `docker/rsc/IsaacGym_Preview_3_Package.tar.gz`.
-3. Build the docker image: `cd docker && make build`
-4. Launch and enter the docker container: `cd docker && make run`
-5. [To enable GUI windows] In a separate terminal window, on the host machine, run `bash docker/visualize_access.bash`
-
-### Option B: Native Installation
-
-If you'd prefer to run our code in your own python environment, you can follow the instructions below:
-
-#### Install pytorch 1.10 with cuda-11.3:
+如果要打开 Isaac Gym viewer：
 
 ```bash
-pip3 install torch==1.10.0+cu113 torchvision==0.11.1+cu113 torchaudio==0.10.0+cu113 -f https://download.pytorch.org/whl/cu113/torch_stable.html
+python scripts/train.py --show --sim-device cuda:0 --iterations 4000
 ```
 
-#### Install Isaac Gym
-
-1. Download and install Isaac Gym Preview 3 from https://developer.nvidia.com/isaac-gym
-2. unzip the file via:
-    ```bash
-    tar -xf IsaacGym_Preview_3_Package.tar.gz
-    ```
-
-3. now install the python package
-    ```bash
-    cd isaacgym_lib/python && pip install -e .
-    ```
-4. Verify the installation by try running an example
-
-    ```bash
-    python examples/1080_balls_of_solitude.py
-    ```
-5. For troubleshooting check docs `isaacgym/docs/index.html`
-
-#### Install the `mini_gym` package
-
-In this repository, run `pip install -e .`
-
-### Verifying the Installation
-
-If everything is installed correctly, you should be able to run the test script with:
+如果只是快速确认训练链路，不想完整训练 4000 iteration：
 
 ```bash
-python scripts/test.py
+python scripts/train.py --headless --sim-device cuda:0 --iterations 10
 ```
 
-The script should print `Simulating step {i}`.
-The GUI is off by default. To turn it on, set `headless=False` in `test.py`'s main function call.
+RTX 4070 Ti 建议先用默认 800 env 跑正式训练。RTX 2050 这类显存较小的机器优先跑上面的 smoke test；如果确实要在小显存机器上训练，需要临时降低 `mini_gym/envs/mini_cheetah/mini_cheetah_config.py` 里的 `Cfg.env.num_envs`，当前 `scripts/train.py` 没有提供 `--num-envs` 命令行参数。
 
-### Training a Model
+训练日志会写到：
 
-To train the mini-cheetah robot to run and spin fast, run: 
-
-```bash
-python scripts/train.py
+```text
+runs/rapid-locomotion/<日期>/train/<时间戳>/
 ```
 
-After initializing the simulator, the script will print out a list of metrics every ten training iterations.
+关键输出在：
 
-Training with the default configuration requires about 12GB of GPU memory. If you have less memory available, you can 
-still train by reducing the number of parallel environments used in simulation (the default is `Cfg.env.num_envs = 4000`).
+```text
+runs/rapid-locomotion/<日期>/train/<时间戳>/checkpoints/
+```
 
-To visualize training progress, first start the ml_dash frontend app:
+其中：
+
+```text
+ac_weights_*.pt           # PyTorch 权重 checkpoint
+ac_weights_last.pt        # 最新 PyTorch 权重副本
+estimator_latest.jit      # estimator TorchScript
+body_latest.jit           # actor body TorchScript
+```
+
+部署和播放路径默认使用 `estimator_latest.jit` + `body_latest.jit`，不再使用旧的 `adaptation_module_latest.jit`。
+
+## 训练曲线
+
+训练时 `ml_logger` 会记录 reward、value loss、surrogate loss、estimator loss 等指标。若要看 dashboard，可在 `runs` 目录上层启动：
+
 ```bash
 python -m ml_dash.app
-```
-then start the ml_dash backend server by running this command in the parent directory of the `runs` folder:
-```bash
 python -m ml_dash.server .
 ```
 
-Finally, use a web browser to go to the app IP (defaults to `localhost:3001`) 
-and create a new profile with the credentials:
+浏览器默认访问：
 
-Username: `runs`
-API: [server IP] (defaults to `localhost:8081`)
-Access Token: [blank]
+```text
+http://localhost:3001
+```
 
-Now, clicking on the profile should yield a 
+常用 profile：
 
-### Evaluating the Model
+```text
+Username: runs
+API: http://localhost:8081
+Access Token: 留空
+```
 
-To evaluate the most recently trained model, run:
+## 播放和探针
+
+播放最近一次训练结果：
 
 ```bash
 python scripts/play.py
 ```
 
-The robot is commanded to run forward at 5m/s for 5 seconds. After completing the simulation, 
-the script plots the robot's velocity and joint angles. To modify the commanded velocity, you can edit 
-[line 109 of the script](https://github.com/gmargo11/model-free-agility/blob/main/scripts/play.py#L109). 
+headless 播放逻辑默认会加载最新 run 下的：
 
-The GUI is on by default. 
-If it does not appear, and you're working in docker, make sure you haven't forgotten to run `bash docker/visualize_access.bash`.
-
-
-## Support
-
-For questions about the code, please create an issue in the repository.
-
-## Bibtex <a name="bibtex"></a>
-
+```text
+checkpoints/estimator_latest.jit
+checkpoints/body_latest.jit
 ```
+
+零命令探针，用于看 0 command 下 observation、estimator 输出、action 和目标关节角：
+
+```bash
+python scripts/play_zero_probe.py --run runs/rapid-locomotion/example --headless
+```
+
+带 viewer：
+
+```bash
+python scripts/play_zero_probe.py --run runs/rapid-locomotion/example --show
+```
+
+只打印关节角：
+
+```bash
+python scripts/play_zero_probe.py --run runs/rapid-locomotion/example --angles-only
+```
+
+## 部署侧 JIT 校验
+
+只校验 checkpoint 目录下是否能找到并加载 `estimator_latest.jit` 和 `body_latest.jit`：
+
+```bash
+python scripts/rl_lcm_policy.py \
+  --checkpoint runs/rapid-locomotion/<日期>/train/<时间戳>/checkpoints \
+  --validate-only
+```
+
+实际 LCM 节点会从 robot state 构造 142 维 observation，先跑 estimator，再把 `obs + estimator_output` 输入 body，最终发布 12 维 action 和目标关节位置。
+
+## 原项目来源
+
+本仓库最初来自 **Rapid Locomotion via Reinforcement Learning**：
+
+```bibtex
 @inproceedings{margolisyang2022rapid,
   title={Rapid Locomotion via Reinforcement Learning},
-  author={Margolis, Gabriel and Yang, Ge and Paigwar, 
+  author={Margolis, Gabriel and Yang, Ge and Paigwar,
           Kartik and Chen, Tao and Agrawal, Pulkit},
   booktitle={Robotics: Science and Systems},
   year={2022}
 }
 ```
+
+原项目基于：
+
+* legged gym / Rudin et al.
+* Isaac Gym / NVIDIA
+* rsl_rl / Rudin et al.
+* ml_logger / jaynes
+
+保留的第三方代码仍遵循仓库中的原始 license 文件。
