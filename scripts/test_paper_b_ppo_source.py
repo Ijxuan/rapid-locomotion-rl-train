@@ -65,6 +65,17 @@ class PaperBPpoSourceTest(unittest.TestCase):
         self.assertIn("estimator_latest.jit", source)
         self.assertIn("body_latest.jit", source)
 
+    def test_train_script_exposes_2070_low_memory_profile(self):
+        source = self.read("scripts/train.py")
+
+        self.assertIn("def apply_2070_profile", source)
+        self.assertIn('parser.add_argument("-2070", "--rtx2070"', source)
+        self.assertIn("Cfg.env.num_envs = 128", source)
+        self.assertIn("RunnerArgs.num_steps_per_env = 16", source)
+        self.assertIn("Cfg.sim.physx.max_gpu_contact_pairs = 2 ** 20", source)
+        self.assertIn("Cfg.sim.physx.default_buffer_size_multiplier = 5", source)
+        self.assertIn('low_memory_profile="2070" if profile_2070 else "default"', source)
+
     def test_actor_critic_paper_b_runtime_shapes(self):
         model = ActorCritic(
             num_obs=OBS_DIM,

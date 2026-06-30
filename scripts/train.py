@@ -3,7 +3,31 @@ import isaacgym
 assert isaacgym
 
 
-def train_mc(headless=True, sim_device="cuda:0", num_learning_iterations=4000):
+def apply_2070_profile(Cfg, RunnerArgs):
+    """Reduce Isaac Gym and rollout buffers for smaller GPUs."""
+    Cfg.env.num_envs = 128
+    Cfg.env.record_video = False
+    Cfg.terrain.num_rows = 1
+    Cfg.terrain.num_cols = 1
+    Cfg.terrain.border_size = 0
+    Cfg.terrain.curriculum = False
+    Cfg.sim.physx.max_gpu_contact_pairs = 2 ** 20
+    Cfg.sim.physx.default_buffer_size_multiplier = 5
+    RunnerArgs.num_steps_per_env = 16
+    RunnerArgs.save_video_interval = 0
+    return {
+        "num_envs": Cfg.env.num_envs,
+        "num_steps_per_env": RunnerArgs.num_steps_per_env,
+        "terrain_num_rows": Cfg.terrain.num_rows,
+        "terrain_num_cols": Cfg.terrain.num_cols,
+        "terrain_border_size": Cfg.terrain.border_size,
+        "max_gpu_contact_pairs": Cfg.sim.physx.max_gpu_contact_pairs,
+        "default_buffer_size_multiplier": Cfg.sim.physx.default_buffer_size_multiplier,
+        "record_video": Cfg.env.record_video,
+    }
+
+
+def train_mc(headless=True, sim_device="cuda:0", num_learning_iterations=4000, profile_2070=False):
     import torch
 
     from mini_gym.envs.base.legged_robot_config import Cfg
@@ -19,6 +43,7 @@ def train_mc(headless=True, sim_device="cuda:0", num_learning_iterations=4000):
     from mini_gym_learn.ppo import RunnerArgs
 
     config_mini_cheetah(Cfg)
+    profile_settings = apply_2070_profile(Cfg, RunnerArgs) if profile_2070 else {}
 
     env = VelocityTrackingEasyEnv(sim_device=sim_device, headless=headless, cfg=Cfg)
 
@@ -34,6 +59,8 @@ def train_mc(headless=True, sim_device="cuda:0", num_learning_iterations=4000):
                           headless=headless,
                           sim_device=sim_device,
                           num_learning_iterations=num_learning_iterations,
+                          low_memory_profile="2070" if profile_2070 else "default",
+                          low_memory_profile_settings=profile_settings,
                       ))
 
     env = HistoryWrapper(env)
@@ -50,6 +77,8 @@ def parse_args():
     parser.add_argument("--show", action="store_false", dest="headless", help="open the Isaac Gym viewer")
     parser.add_argument("--sim-device", default="cuda:0")
     parser.add_argument("--iterations", type=int, default=4000)
+    parser.add_argument("-2070", "--rtx2070", action="store_true", dest="profile_2070",
+                        help="use a lower-memory training profile for RTX 2070/low-VRAM GPUs")
     return parser.parse_args()
 
 
@@ -72,4 +101,5 @@ if __name__ == '__main__':
                 """, filename=".charts.yml", dedent=True)
 
     args = parse_args()
-    train_mc(headless=args.headless, sim_device=args.sim_device, num_learning_iterations=args.iterations)
+    train_mc(headless=args.headless, sim_device=args.sim_device, num_learning_iterations=args.iterations,
+             profile_2070=args.profile_2070)

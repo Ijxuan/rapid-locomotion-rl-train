@@ -187,7 +187,30 @@ python scripts/train.py --show --sim-device cuda:0 --iterations 4000
 python scripts/train.py --headless --sim-device cuda:0 --iterations 10
 ```
 
-RTX 4070 Ti 建议先用默认 800 env 跑正式训练。RTX 2050 这类显存较小的机器优先跑上面的 smoke test；如果确实要在小显存机器上训练，需要临时降低 `mini_gym/envs/mini_cheetah/mini_cheetah_config.py` 里的 `Cfg.env.num_envs`，当前 `scripts/train.py` 没有提供 `--num-envs` 命令行参数。
+低显存机器可以加 `-2070`，默认配置不会变，只有传这个选项时才会降低并行环境数量、terrain 尺寸和 PhysX GPU buffer：
+
+```bash
+python scripts/train.py -2070 --headless --sim-device cuda:0 --iterations 4000
+```
+
+快速检查低显存训练链路：
+
+```bash
+python scripts/train.py -2070 --headless --sim-device cuda:0 --iterations 10
+```
+
+`-2070` profile 当前会使用：
+
+* `Cfg.env.num_envs = 128`
+* `RunnerArgs.num_steps_per_env = 16`
+* `Cfg.terrain.num_rows = 1`
+* `Cfg.terrain.num_cols = 1`
+* `Cfg.terrain.border_size = 0`
+* `Cfg.sim.physx.max_gpu_contact_pairs = 2 ** 20`
+* `Cfg.sim.physx.default_buffer_size_multiplier = 5`
+* `Cfg.env.record_video = False`
+
+RTX 4070 Ti 建议先用默认 800 env 跑正式训练。RTX 2050 / RTX 2070 这类显存较小的机器优先用 `-2070` 或只跑 smoke test。
 
 训练日志会写到：
 
