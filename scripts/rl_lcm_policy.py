@@ -23,6 +23,9 @@ from mini_gym.deploy.rapid_locomotion_policy import (
     OBS_DIM,
     ObservationHistory,
     action_to_target_q,
+    policy_to_robot_order,
+    robot_foot_positions_to_policy_order,
+    robot_to_policy_order,
 )
 
 
@@ -154,20 +157,25 @@ class RapidRLPolicyNode:
         self.last_state_latency_ms = max(0.0, (monotonic_us() - int(msg.timestamp_us)) / 1000.0)
         self.last_state_sequence = int(msg.sequence)
         self.last_command = np.asarray(msg.command, dtype=np.float32)
+        q_policy = robot_to_policy_order(msg.q)
+        qd_policy = robot_to_policy_order(msg.qd)
+        foot_positions_body_policy = robot_foot_positions_to_policy_order(
+            _msg_vector(msg, "foot_positions_body", np.zeros(12, dtype=np.float32), 12)
+        )
 
         obs = self.history.build(
             _msg_vector(msg, "base_quat", [0.0, 0.0, 0.0, 1.0], 4),
             _msg_vector(msg, "base_ang_vel", [0.0, 0.0, 0.0], 3),
-            msg.q,
-            msg.qd,
-            _msg_vector(msg, "foot_positions_body", np.zeros(12, dtype=np.float32), 12),
+            q_policy,
+            qd_policy,
+            foot_positions_body_policy,
             msg.command,
         )
 
         if self.zero_action:
             inference_time_ms = 0.0
-            action = np.zeros(ACTION_DIM, dtype=np.float32)
-            target_q = DEFAULT_Q_POLICY.copy()
+            action_policy = np.zeros(ACTION_DIM, dtype=np.float32)
+            target_q_policy = DEFAULT_Q_POLICY.copy()
         else:
             start = time.perf_counter()
             with self.torch.no_grad():
@@ -175,12 +183,14 @@ class RapidRLPolicyNode:
                 estimator_output = self.estimator(obs_t)
                 action_t = self.body(self.torch.cat((obs_t, estimator_output), dim=1))
             inference_time_ms = (time.perf_counter() - start) * 1000.0
-            action = action_t.detach().cpu().numpy().reshape(ACTION_DIM).astype(np.float32)
-            target_q = action_to_target_q(action)
+            action_policy = action_t.detach().cpu().numpy().reshape(ACTION_DIM).astype(np.float32)
+            target_q_policy = action_to_target_q(action_policy)
 
-        self.history.update_desired_joint_positions(target_q)
-        self.last_action = action.copy()
-        self.last_target_q = target_q.copy()
+        self.history.update_desired_joint_positions(target_q_policy)
+        action_robot = policy_to_robot_order(action_policy)
+        target_q_robot = policy_to_robot_order(target_q_policy)
+        self.last_action = action_robot.copy()
+        self.last_target_q = target_q_robot.copy()
 
         cmd = self.rl_policy_cmd_lcmt()
         cmd.timestamp_us = monotonic_us()
@@ -188,8 +198,8 @@ class RapidRLPolicyNode:
         cmd.state_sequence = msg.sequence
         cmd.status = 1
         cmd.inference_time_ms = float(inference_time_ms)
-        cmd.action = [float(x) for x in action]
-        cmd.target_q = [float(x) for x in target_q]
+        cmd.action = [float(x) for x in action_robot]
+        cmd.target_q = [float(x) for x in target_q_robot]
         self.lcm.publish(self.command_channel, cmd.encode())
         self.sequence += 1
         self.published_count += 1

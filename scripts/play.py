@@ -166,6 +166,9 @@ def play_mc(headless=True):
     base_env.commands[:, 0] = x_vel_cmd
     base_env.commands[:, 1] = y_vel_cmd
     base_env.commands[:, 2] = yaw_vel_cmd
+    base_env.compute_observations()
+    env.obs_history[:, :] = 0.0
+    obs = {"obs": base_env.obs_buf.clone(), "privileged_obs": base_env.privileged_obs_buf, "obs_history": env.obs_history}
 
     for i in tqdm(range(num_eval_steps)):
         base_env.commands[:, 0] = x_vel_cmd

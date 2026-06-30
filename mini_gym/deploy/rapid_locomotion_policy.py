@@ -43,6 +43,8 @@ DEFAULT_Q_POLICY = np.array(
 # corresponding robot-order index.
 POLICY_TO_ROBOT = np.array([3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8], dtype=np.int64)
 ROBOT_TO_POLICY = POLICY_TO_ROBOT.copy()
+FOOT_POLICY_TO_ROBOT = np.array([1, 0, 3, 2], dtype=np.int64)
+FOOT_ROBOT_TO_POLICY = FOOT_POLICY_TO_ROBOT.copy()
 
 
 def _array(values: Iterable[float], size: int, name: str) -> np.ndarray:
@@ -63,6 +65,18 @@ def policy_to_robot_order(values: Iterable[float]) -> np.ndarray:
     robot = np.empty(ACTION_DIM, dtype=np.float32)
     robot[POLICY_TO_ROBOT] = policy
     return robot
+
+
+def robot_foot_positions_to_policy_order(values: Iterable[float]) -> np.ndarray:
+    foot_positions = _array(values, FOOT_COUNT * 3, "foot_positions_body").reshape(FOOT_COUNT, 3)
+    return foot_positions[FOOT_ROBOT_TO_POLICY].reshape(-1).copy()
+
+
+def policy_foot_positions_to_robot_order(values: Iterable[float]) -> np.ndarray:
+    foot_positions = _array(values, FOOT_COUNT * 3, "foot_positions_body").reshape(FOOT_COUNT, 3)
+    robot = np.empty((FOOT_COUNT, 3), dtype=np.float32)
+    robot[FOOT_POLICY_TO_ROBOT] = foot_positions
+    return robot.reshape(-1)
 
 
 def action_to_target_q(action: Iterable[float]) -> np.ndarray:

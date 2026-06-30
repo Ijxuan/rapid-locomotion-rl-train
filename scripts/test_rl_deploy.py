@@ -14,7 +14,9 @@ from mini_gym.deploy.rapid_locomotion_policy import (
     ObservationHistory,
     action_to_target_q,
     build_observation,
+    policy_foot_positions_to_robot_order,
     policy_to_robot_order,
+    robot_foot_positions_to_policy_order,
     robot_to_policy_order,
 )
 from scripts.rl_lcm_policy import resolve_checkpoint
@@ -72,6 +74,23 @@ class RapidLocomotionDeployTest(unittest.TestCase):
         expected_robot = np.array([3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8], dtype=np.float32)
         np.testing.assert_allclose(robot_to_policy_order(values), expected_policy)
         np.testing.assert_allclose(policy_to_robot_order(values), expected_robot)
+
+    def test_foot_position_mapping_matches_training_foot_order(self):
+        values = np.arange(12, dtype=np.float32)
+        expected_policy = np.array([3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8], dtype=np.float32)
+
+        np.testing.assert_allclose(robot_foot_positions_to_policy_order(values), expected_policy)
+        np.testing.assert_allclose(policy_foot_positions_to_robot_order(values), expected_policy)
+
+    def test_lcm_policy_source_uses_robot_policy_order_conversions(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts/rl_lcm_policy.py").read_text(encoding="utf-8")
+
+        self.assertIn("robot_to_policy_order(msg.q)", source)
+        self.assertIn("robot_to_policy_order(msg.qd)", source)
+        self.assertIn("robot_foot_positions_to_policy_order", source)
+        self.assertIn("policy_to_robot_order(action_policy)", source)
+        self.assertIn("policy_to_robot_order(target_q_policy)", source)
 
     def test_resolve_checkpoint_accepts_run_directory(self):
         with TemporaryDirectory() as tmp:
