@@ -88,6 +88,17 @@ class RapidLocomotionDeployTest(unittest.TestCase):
         np.testing.assert_allclose(history.joint_velocity_history[:ACTION_DIM], np.ones(ACTION_DIM))
         np.testing.assert_allclose(history.previous_desired_joint_positions[:ACTION_DIM], DEFAULT_Q_POLICY + 0.2)
 
+    def test_desired_joint_history_keeps_current_then_previous_target(self):
+        history = ObservationHistory()
+        first_target = DEFAULT_Q_POLICY + 0.2
+        second_target = DEFAULT_Q_POLICY - 0.3
+
+        history.update_desired_joint_positions(first_target)
+        history.update_desired_joint_positions(second_target)
+
+        np.testing.assert_allclose(history.previous_desired_joint_positions[:ACTION_DIM], second_target)
+        np.testing.assert_allclose(history.previous_desired_joint_positions[ACTION_DIM:], first_target)
+
     def test_observation_history_uses_paper_b_sparse_joint_delays(self):
         history = ObservationHistory()
 

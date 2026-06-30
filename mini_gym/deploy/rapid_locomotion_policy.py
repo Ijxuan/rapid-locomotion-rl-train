@@ -190,7 +190,7 @@ class ObservationHistory:
 
     def update_desired_joint_positions(self, target_q: Iterable[float]) -> None:
         target_q = _array(target_q, ACTION_DIM, "target_q")
-        self.previous_desired_joint_positions[ACTION_DIM:] = self.previous_desired_joint_positions[:ACTION_DIM]
+        self.previous_desired_joint_positions[ACTION_DIM:] = self.previous_desired_joint_positions[:ACTION_DIM].copy()
         self.previous_desired_joint_positions[:ACTION_DIM] = target_q
 
     def build(
