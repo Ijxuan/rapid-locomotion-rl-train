@@ -11,6 +11,7 @@ from mini_gym.deploy.rapid_locomotion_policy import (
     DEFAULT_Q_POLICY,
     ESTIMATOR_OUTPUT_DIM,
     OBS_DIM,
+    POLICY_DT,
     POLICY_DOF_NAMES,
     POLICY_LEG_ORDER,
     ROBOT_LEG_ORDER,
@@ -118,6 +119,17 @@ class RapidLocomotionDeployTest(unittest.TestCase):
 
         np.testing.assert_allclose(history.joint_position_error_history, expected_errors)
         np.testing.assert_allclose(history.joint_velocity_history, expected_velocities)
+
+    def test_observation_history_sparse_delays_are_20_40_60_ms(self):
+        history = ObservationHistory()
+
+        self.assertAlmostEqual(POLICY_DT, 0.01)
+        self.assertEqual(history.joint_history_delay_line_steps, 7)
+        self.assertEqual(history.joint_history_sparse_indices, (4, 2, 0))
+
+        latest_index = history.joint_history_delay_line_steps - 1
+        delays = tuple((latest_index - index) * POLICY_DT for index in history.joint_history_sparse_indices)
+        np.testing.assert_allclose(delays, np.array([0.02, 0.04, 0.06], dtype=np.float32))
 
     def test_policy_robot_mapping_matches_training_dof_order(self):
         values = np.arange(ACTION_DIM, dtype=np.float32)

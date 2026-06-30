@@ -1,6 +1,16 @@
 import unittest
 from pathlib import Path
 
+import torch
+
+from mini_gym.envs.base.paper_b_observation import (
+    ACTION_DIM,
+    ACTOR_INPUT_DIM,
+    ESTIMATOR_TARGET_DIM,
+    OBS_DIM,
+)
+from mini_gym_learn.ppo.actor_critic import ActorCritic
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -54,6 +64,60 @@ class PaperBPpoSourceTest(unittest.TestCase):
         self.assertIn("--show", source)
         self.assertIn("estimator_latest.jit", source)
         self.assertIn("body_latest.jit", source)
+
+    def test_actor_critic_paper_b_runtime_shapes(self):
+        model = ActorCritic(
+            num_obs=OBS_DIM,
+            num_privileged_obs=ESTIMATOR_TARGET_DIM,
+            num_obs_history=OBS_DIM,
+            num_actions=ACTION_DIM,
+        )
+        obs = torch.randn(3, OBS_DIM)
+
+        estimator_output = model.estimate(obs)
+        action = model.act_student(obs)
+        value = model.evaluate(obs, torch.randn(3, ESTIMATOR_TARGET_DIM))
+
+        self.assertEqual(tuple(estimator_output.shape), (3, ESTIMATOR_TARGET_DIM))
+        self.assertEqual(tuple(action.shape), (3, ACTION_DIM))
+        self.assertEqual(tuple(value.shape), (3, 1))
+        self.assertEqual(model.actor_body[0].in_features, ACTOR_INPUT_DIM)
+        self.assertEqual(model.critic_body[0].in_features, ACTOR_INPUT_DIM)
+        self.assertTrue(torch.all(estimator_output[:, -4:] >= 0.0))
+        self.assertTrue(torch.all(estimator_output[:, -4:] <= 1.0))
+
+    def test_actor_body_uses_estimator_output_not_privileged_obs(self):
+        model = ActorCritic(
+            num_obs=OBS_DIM,
+            num_privileged_obs=ESTIMATOR_TARGET_DIM,
+            num_obs_history=OBS_DIM,
+            num_actions=ACTION_DIM,
+        )
+        obs = torch.randn(2, OBS_DIM)
+
+        model.update_distribution(obs, torch.zeros(2, ESTIMATOR_TARGET_DIM))
+        mean_with_zero_privileged = model.action_mean.detach().clone()
+        model.update_distribution(obs, torch.ones(2, ESTIMATOR_TARGET_DIM))
+        mean_with_one_privileged = model.action_mean.detach().clone()
+
+        torch.testing.assert_close(mean_with_zero_privileged, mean_with_one_privileged)
+
+    def test_estimator_and_body_are_torchscript_exportable(self):
+        model = ActorCritic(
+            num_obs=OBS_DIM,
+            num_privileged_obs=ESTIMATOR_TARGET_DIM,
+            num_obs_history=OBS_DIM,
+            num_actions=ACTION_DIM,
+        ).cpu()
+        obs = torch.zeros(1, OBS_DIM)
+
+        estimator = torch.jit.script(model.estimator)
+        body = torch.jit.script(model.actor_body)
+        estimator_output = estimator(obs)
+        action = body(torch.cat((obs, estimator_output), dim=-1))
+
+        self.assertEqual(tuple(estimator_output.shape), (1, ESTIMATOR_TARGET_DIM))
+        self.assertEqual(tuple(action.shape), (1, ACTION_DIM))
 
 
 if __name__ == "__main__":

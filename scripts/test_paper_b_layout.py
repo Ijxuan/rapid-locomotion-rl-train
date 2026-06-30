@@ -126,6 +126,10 @@ class PaperBLayoutTest(unittest.TestCase):
         self.assertEqual(cfg.rewards.paper_b_termination_penalty, -10.0)
 
         self.assertEqual(cfg.domain_rand.friction_range, [0.4, 1.0])
+        self.assertTrue(cfg.domain_rand.randomize_friction)
+        self.assertTrue(cfg.domain_rand.randomize_motor_friction)
+        self.assertTrue(cfg.domain_rand.randomize_pd_gains)
+        self.assertTrue(cfg.domain_rand.randomize_foot_radius)
         self.assertEqual(cfg.domain_rand.motor_friction_haa_hfe_range, [0.0, 0.3])
         self.assertEqual(cfg.domain_rand.motor_friction_kfe_range, [0.1, 0.7])
         self.assertEqual(cfg.asset.foot_name, "_foot")
@@ -171,6 +175,19 @@ class PaperBLayoutTest(unittest.TestCase):
         self.assertEqual(cfg.domain_rand.foot_position_noise_range,
                          [[-0.010, 0.010], [-0.005, 0.005], [-0.020, 0.020]])
         self.assertEqual(cfg.domain_rand.foot_radius_range, [0.006, 0.010])
+
+    def test_common_defaults_match_paper_b_initial_state_randomization(self):
+        cfg = fake_cfg()
+        apply_paper_b_mini_cheetah_defaults(cfg)
+
+        self.assertTrue(cfg.init_state.paper_b_randomize_initial_state)
+        self.assertEqual(cfg.init_state.paper_b_reuse_previous_state_probability, 0.25)
+        self.assertEqual(cfg.init_state.noise_quat, [-0.2, 0.2])
+        self.assertEqual(cfg.init_state.noise_dof_pos, [-0.2, 0.2])
+        self.assertEqual(cfg.init_state.noise_dof_vel, [-2.5, 2.5])
+        self.assertEqual(cfg.init_state.noise_lin_vel_x, [-1.0, 1.0])
+        self.assertEqual(cfg.init_state.noise_lin_vel_yz, [-0.5, 0.5])
+        self.assertEqual(cfg.init_state.noise_ang_vel, [-0.7, 0.7])
 
 
 if __name__ == "__main__":
