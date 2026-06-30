@@ -1,5 +1,4 @@
 runs
-paper
 # Jaynes secret files
 .secret*
 # ml_logger cache files
