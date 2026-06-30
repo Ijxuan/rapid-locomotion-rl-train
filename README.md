@@ -10,8 +10,8 @@ This branch keeps the original rapid-locomotion training framework and Mini Chee
 Local code-only checks that do not require Isaac Gym:
 
 ```bash
-python -m unittest scripts.test_paper_b_layout scripts.test_paper_b_rewards scripts.test_paper_b_ppo_source scripts.test_paper_b_command_asset scripts.test_rl_deploy
-python -m py_compile mini_gym/envs/base/paper_b_observation.py mini_gym/envs/base/paper_b_rewards.py mini_gym/envs/base/paper_b_commands.py mini_gym/envs/base/paper_b_assets.py mini_gym/envs/base/legged_robot.py mini_gym/envs/mini_cheetah/velocity_tracking/velocity_tracking_easy_env.py mini_gym_learn/ppo/actor_critic.py mini_gym_learn/ppo/ppo.py mini_gym_learn/ppo/rollout_storage.py mini_gym_learn/ppo/__init__.py mini_gym/deploy/rapid_locomotion_policy.py scripts/train.py scripts/play.py scripts/play_zero_probe.py scripts/paper_b_remote_smoke.py scripts/rl_lcm_policy.py
+python -m unittest scripts.test_paper_b_layout scripts.test_paper_b_rewards scripts.test_paper_b_ppo_source scripts.test_paper_b_command_asset scripts.test_paper_b_eval_metrics scripts.test_rl_deploy
+python -m py_compile mini_gym/envs/base/paper_b_observation.py mini_gym/envs/base/paper_b_rewards.py mini_gym/envs/base/paper_b_commands.py mini_gym/envs/base/paper_b_assets.py mini_gym/envs/base/legged_robot.py mini_gym/envs/mini_cheetah/velocity_tracking/velocity_tracking_easy_env.py mini_gym_learn/ppo/actor_critic.py mini_gym_learn/ppo/ppo.py mini_gym_learn/ppo/rollout_storage.py mini_gym_learn/ppo/__init__.py mini_gym_learn/eval_metrics/metrics.py mini_gym/deploy/rapid_locomotion_policy.py scripts/train.py scripts/play.py scripts/play_zero_probe.py scripts/paper_b_remote_smoke.py scripts/rl_lcm_policy.py
 ```
 
 Remote Isaac Gym smoke sequence:
