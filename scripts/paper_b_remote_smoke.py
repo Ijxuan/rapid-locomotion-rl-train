@@ -182,6 +182,8 @@ def check_ppo(num_envs: int, sim_device: str, iterations: int, steps_per_iter: i
 
 
 def check_jit():
+    from scripts.play import load_jit_policy
+
     configure_cfg(num_envs=1)
     model = ActorCritic(
         num_obs=Cfg.env.num_observations,
@@ -197,6 +199,12 @@ def check_jit():
         _, _, estimator_path, body_path, estimator_shape, action_shape = load_and_validate_checkpoint(checkpoint, torch)
         print("estimator jit:", estimator_path.name, estimator_shape)
         print("body jit:", body_path.name, action_shape)
+        play_policy = load_jit_policy(Path(tmp), "cpu")
+        play_action = play_policy({"obs": torch.zeros(1, 142, dtype=torch.float32)})
+        if tuple(play_action.shape) != (1, 12):
+            raise AssertionError(f"play JIT action shape mismatch: {tuple(play_action.shape)}")
+        assert_finite("play_jit_action", play_action)
+        print("play jit loader:", tuple(play_action.shape))
 
 
 def parse_args():
