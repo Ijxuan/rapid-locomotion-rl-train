@@ -1,7 +1,12 @@
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
-from mini_gym.envs.base.paper_b_assets import foot_radius_buckets, foot_sphere_radius_from_urdf
+from mini_gym.envs.base.paper_b_assets import (
+    foot_radius_buckets,
+    foot_sphere_radius_from_urdf,
+    generate_sphere_foot_urdf_variants,
+)
 from mini_gym.envs.base.paper_b_commands import paper_b_vx_range
 
 
@@ -29,6 +34,19 @@ class PaperBCommandAssetTest(unittest.TestCase):
 
         self.assertAlmostEqual(foot_sphere_radius_from_urdf(urdf), 0.0175)
 
+    def test_sphere_foot_urdf_variants_are_written_with_requested_radii(self):
+        root = Path(__file__).resolve().parents[1]
+        urdf = root / "resources/robots/mini_cheetah/urdf/mini_cheetah_simple.urdf"
+        radii = foot_radius_buckets([0.006, 0.010])
+
+        with TemporaryDirectory() as tmp:
+            variants = generate_sphere_foot_urdf_variants(urdf, tmp, radii)
+
+            self.assertEqual(len(variants), len(radii))
+            for variant, radius in zip(variants, radii):
+                self.assertTrue(Path(variant).exists())
+                self.assertAlmostEqual(foot_sphere_radius_from_urdf(variant), radius)
+
     def test_mini_cheetah_config_source_uses_sphere_foot_asset(self):
         source = (Path(__file__).resolve().parents[1]
                   / "mini_gym/envs/mini_cheetah/mini_cheetah_config.py").read_text(encoding="utf-8")
@@ -36,6 +54,14 @@ class PaperBCommandAssetTest(unittest.TestCase):
         self.assertIn("mini_cheetah_simple.urdf", source)
         self.assertIn('_.foot_name = "_foot"', source)
         self.assertIn("_.collapse_fixed_joints = False", source)
+
+    def test_legged_robot_source_assigns_radius_asset_buckets_per_env(self):
+        source = (Path(__file__).resolve().parents[1]
+                  / "mini_gym/envs/base/legged_robot.py").read_text(encoding="utf-8")
+
+        self.assertIn("asset_paths = self._resolve_robot_asset_paths(asset_path)", source)
+        self.assertIn("asset_id = self._paper_b_asset_bucket_id(i)", source)
+        self.assertIn("robot_asset = self.robot_assets[asset_id]", source)
 
 
 if __name__ == "__main__":

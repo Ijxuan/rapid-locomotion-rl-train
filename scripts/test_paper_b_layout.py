@@ -132,6 +132,46 @@ class PaperBLayoutTest(unittest.TestCase):
         self.assertEqual(cfg.asset.terminate_after_contacts_on, ["base", "trunk"])
         self.assertFalse(cfg.asset.collapse_fixed_joints)
 
+    def test_common_defaults_match_paper_b_reward_and_randomization_tables(self):
+        cfg = fake_cfg()
+        apply_paper_b_mini_cheetah_defaults(cfg)
+
+        expected_reward_scales = {
+            "tracking_lin_vel": 3.0,
+            "tracking_ang_vel": 3.0,
+            "feet_air_time": 0.3,
+            "feet_slip": -0.08,
+            "feet_clearance": -15.0,
+            "orientation": -3.0,
+            "torques": -6e-4,
+            "dof_pos": -0.75,
+            "dof_vel": -6e-4,
+            "dof_acc": -0.02,
+            "action_smoothness_1": -2.5,
+            "action_smoothness_2": -1.2,
+            "base_motion": -1.5,
+        }
+        for name, value in expected_reward_scales.items():
+            self.assertEqual(getattr(cfg.rewards.scales, name), value)
+
+        self.assertEqual(cfg.rewards.paper_b_reward_exponential_scale, 0.2)
+        self.assertEqual(cfg.rewards.paper_b_desired_foot_height, 0.09)
+        self.assertEqual(cfg.rewards.paper_b_termination_penalty, -10.0)
+
+        self.assertEqual(cfg.domain_rand.friction_range, [0.4, 1.0])
+        self.assertEqual(cfg.domain_rand.obs_noise_dof_pos, [-0.05, 0.05])
+        self.assertEqual(cfg.domain_rand.obs_noise_dof_vel, [-0.5, 0.5])
+        self.assertEqual(cfg.domain_rand.obs_noise_base_quat, [-0.03, 0.03])
+        self.assertEqual(cfg.domain_rand.obs_noise_foot_pos, [-0.03, 0.03])
+        self.assertEqual(cfg.domain_rand.obs_noise_base_ang_vel, [-0.1, 0.1])
+        self.assertEqual(cfg.domain_rand.motor_friction_haa_hfe_range, [0.0, 0.3])
+        self.assertEqual(cfg.domain_rand.motor_friction_kfe_range, [0.1, 0.7])
+        self.assertEqual(cfg.domain_rand.Kp_noise_range, [-2.0, 2.0])
+        self.assertEqual(cfg.domain_rand.Kd_noise_range, [-0.1, 0.1])
+        self.assertEqual(cfg.domain_rand.foot_position_noise_range,
+                         [[-0.010, 0.010], [-0.005, 0.005], [-0.020, 0.020]])
+        self.assertEqual(cfg.domain_rand.foot_radius_range, [0.006, 0.010])
+
 
 if __name__ == "__main__":
     unittest.main()
