@@ -11,7 +11,7 @@ Local code-only checks that do not require Isaac Gym:
 
 ```bash
 python -m unittest scripts.test_paper_b_layout scripts.test_paper_b_rewards scripts.test_paper_b_ppo_source scripts.test_paper_b_command_asset scripts.test_rl_deploy
-python -m py_compile mini_gym/envs/base/paper_b_observation.py mini_gym/envs/base/paper_b_rewards.py mini_gym/envs/base/paper_b_commands.py mini_gym/envs/base/paper_b_assets.py mini_gym/deploy/rapid_locomotion_policy.py scripts/rl_lcm_policy.py
+python -m py_compile mini_gym/envs/base/paper_b_observation.py mini_gym/envs/base/paper_b_rewards.py mini_gym/envs/base/paper_b_commands.py mini_gym/envs/base/paper_b_assets.py mini_gym/deploy/rapid_locomotion_policy.py scripts/train.py scripts/play.py scripts/play_zero_probe.py scripts/paper_b_remote_smoke.py scripts/rl_lcm_policy.py
 ```
 
 Remote Isaac Gym smoke sequence:
@@ -29,6 +29,8 @@ python scripts/paper_b_remote_smoke.py --check jit
 # Or run the full smoke suite in one command:
 python scripts/paper_b_remote_smoke.py --check all --num-envs 8
 ```
+
+Training uses the Paper B Mini Cheetah config by default. Use `python scripts/train.py --headless --sim-device cuda:0`, or pass `--show` to open the Isaac Gym viewer. `scripts/play.py`, `scripts/play_zero_probe.py`, and deployment load `estimator_latest.jit` plus `body_latest.jit`.
 
 # Code for Rapid Locomotion via Reinforcement Learning
 

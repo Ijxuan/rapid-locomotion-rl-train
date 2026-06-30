@@ -1374,7 +1374,7 @@ class LeggedRobot(BaseTask):
                                                            self.cfg.commands.limit_vel_y[1], 2),
                                                     yaw_vel=(self.cfg.commands.limit_vel_yaw[0],
                                                              self.cfg.commands.limit_vel_yaw[1], 51))
-        self.env_command_bins = np.zeros(len(env_ids), dtype=np.int)
+        self.env_command_bins = np.zeros(len(env_ids), dtype=np.int64)
         low = np.array(
             [self.cfg.commands.lin_vel_x[0], self.cfg.commands.lin_vel_y[0],
              self.cfg.commands.ang_vel_yaw[0]])

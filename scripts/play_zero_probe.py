@@ -101,22 +101,26 @@ def apply_saved_parameters(run_dir: Path) -> None:
 
 
 def disable_eval_randomization() -> None:
-    Cfg.domain_rand.push_robots = False
-    Cfg.domain_rand.randomize_friction = False
-    Cfg.domain_rand.randomize_gravity = False
-    Cfg.domain_rand.randomize_restitution = False
-    Cfg.domain_rand.randomize_motor_offset = False
-    Cfg.domain_rand.randomize_motor_strength = False
-    Cfg.domain_rand.randomize_friction_indep = False
-    Cfg.domain_rand.randomize_ground_friction = False
-    Cfg.domain_rand.randomize_base_mass = False
-    Cfg.domain_rand.randomize_Kd_factor = False
-    Cfg.domain_rand.randomize_Kp_factor = False
-    Cfg.domain_rand.randomize_motor_friction = False
-    Cfg.domain_rand.randomize_pd_gains = False
-    Cfg.domain_rand.randomize_foot_radius = False
-    Cfg.domain_rand.randomize_joint_friction = False
-    Cfg.domain_rand.randomize_com_displacement = False
+    for name in (
+        "push_robots",
+        "randomize_friction",
+        "randomize_gravity",
+        "randomize_restitution",
+        "randomize_motor_offset",
+        "randomize_motor_strength",
+        "randomize_friction_indep",
+        "randomize_ground_friction",
+        "randomize_base_mass",
+        "randomize_Kd_factor",
+        "randomize_Kp_factor",
+        "randomize_motor_friction",
+        "randomize_pd_gains",
+        "randomize_foot_radius",
+        "randomize_joint_friction",
+        "randomize_com_displacement",
+    ):
+        if hasattr(Cfg.domain_rand, name):
+            setattr(Cfg.domain_rand, name, False)
     Cfg.noise.add_noise = False
 
 

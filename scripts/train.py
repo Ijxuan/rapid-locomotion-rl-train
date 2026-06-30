@@ -1,4 +1,4 @@
-def train_mc(headless=True):
+def train_mc(headless=True, sim_device="cuda:0", num_learning_iterations=4000):
 
     import isaacgym
     assert isaacgym
@@ -18,7 +18,7 @@ def train_mc(headless=True):
 
     config_mini_cheetah(Cfg)
 
-    env = VelocityTrackingEasyEnv(sim_device='cuda:0', headless=headless, cfg=Cfg)
+    env = VelocityTrackingEasyEnv(sim_device=sim_device, headless=headless, cfg=Cfg)
 
     # log the experiment parameters
     logger.log_params(AC_Args=vars(AC_Args), PPO_Args=vars(PPO_Args), RunnerArgs=vars(RunnerArgs),
@@ -29,12 +29,26 @@ def train_mc(headless=True):
                           actor_input_dim=Cfg.env.num_observations + Cfg.env.estimator_output_dim,
                           estimator_jit="estimator_latest.jit",
                           body_jit="body_latest.jit",
+                          headless=headless,
+                          sim_device=sim_device,
+                          num_learning_iterations=num_learning_iterations,
                       ))
 
     env = HistoryWrapper(env)
-    gpu_id = 0
-    runner = Runner(env, device=f"cuda:{gpu_id}")
-    runner.learn(num_learning_iterations=4000, init_at_random_ep_len=True, eval_freq=100)
+    runner = Runner(env, device=sim_device)
+    runner.learn(num_learning_iterations=num_learning_iterations, init_at_random_ep_len=True, eval_freq=100)
+
+
+def parse_args():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Train the Paper B Mini Cheetah reproduction policy.")
+    parser.set_defaults(headless=True)
+    parser.add_argument("--headless", action="store_true", dest="headless", help="run without the Isaac Gym viewer")
+    parser.add_argument("--show", action="store_false", dest="headless", help="open the Isaac Gym viewer")
+    parser.add_argument("--sim-device", default="cuda:0")
+    parser.add_argument("--iterations", type=int, default=4000)
+    return parser.parse_args()
 
 
 if __name__ == '__main__':
@@ -55,5 +69,5 @@ if __name__ == '__main__':
                   glob: "videos/*.mp4"
                 """, filename=".charts.yml", dedent=True)
 
-    # to see the environment rendering, set headless=False
-    train_mc(headless=True)
+    args = parse_args()
+    train_mc(headless=args.headless, sim_device=args.sim_device, num_learning_iterations=args.iterations)

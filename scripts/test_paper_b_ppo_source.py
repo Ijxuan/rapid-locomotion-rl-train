@@ -46,6 +46,15 @@ class PaperBPpoSourceTest(unittest.TestCase):
             self.assertNotIn("ac_weights_last.pt", source)
             self.assertNotIn("ActorCritic(", source)
 
+    def test_train_script_exposes_headless_and_logs_jit_names(self):
+        source = self.read("scripts/train.py")
+
+        self.assertIn("def train_mc(headless=True", source)
+        self.assertIn("--headless", source)
+        self.assertIn("--show", source)
+        self.assertIn("estimator_latest.jit", source)
+        self.assertIn("body_latest.jit", source)
+
 
 if __name__ == "__main__":
     unittest.main()
