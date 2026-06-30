@@ -11,6 +11,9 @@ from mini_gym.deploy.rapid_locomotion_policy import (
     DEFAULT_Q_POLICY,
     ESTIMATOR_OUTPUT_DIM,
     OBS_DIM,
+    POLICY_DOF_NAMES,
+    POLICY_LEG_ORDER,
+    ROBOT_LEG_ORDER,
     ObservationHistory,
     action_to_target_q,
     build_observation,
@@ -23,6 +26,23 @@ from scripts.rl_lcm_policy import resolve_checkpoint
 
 
 class RapidLocomotionDeployTest(unittest.TestCase):
+    def test_deploy_policy_order_matches_mini_cheetah_training_config(self):
+        expected_dof_names = (
+            "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
+            "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
+            "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
+            "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
+        )
+        expected_default_q = np.array(
+            [0.1, -0.8, 1.62, -0.1, -0.8, 1.62, 0.1, -0.8, 1.62, -0.1, -0.8, 1.62],
+            dtype=np.float32,
+        )
+
+        self.assertEqual(POLICY_LEG_ORDER, ("FL", "FR", "RL", "RR"))
+        self.assertEqual(ROBOT_LEG_ORDER, ("FR", "FL", "RR", "RL"))
+        self.assertEqual(POLICY_DOF_NAMES, expected_dof_names)
+        np.testing.assert_allclose(DEFAULT_Q_POLICY, expected_default_q)
+
     def test_zero_action_targets_default_pose(self):
         target = action_to_target_q(np.zeros(ACTION_DIM, dtype=np.float32))
         np.testing.assert_allclose(target, DEFAULT_Q_POLICY)

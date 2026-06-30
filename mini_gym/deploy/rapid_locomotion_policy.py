@@ -13,6 +13,7 @@ ESTIMATOR_OUTPUT_DIM = 11
 ACTOR_INPUT_DIM = OBS_DIM + ESTIMATOR_OUTPUT_DIM
 ACTION_DIM = 12
 FOOT_COUNT = 4
+JOINTS_PER_LEG = 3
 
 POLICY_DT = 0.01
 ACTION_SCALE = 0.1
@@ -39,11 +40,24 @@ DEFAULT_Q_POLICY = np.array(
     dtype=np.float32,
 )
 
-# Robot controller order is FR, FL, RR, RL. This maps each policy index to the
-# corresponding robot-order index.
-POLICY_TO_ROBOT = np.array([3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8], dtype=np.int64)
+POLICY_LEG_ORDER = ("FL", "FR", "RL", "RR")
+ROBOT_LEG_ORDER = ("FR", "FL", "RR", "RL")
+POLICY_DOF_NAMES = tuple(
+    f"{leg}_{joint}_joint"
+    for leg in POLICY_LEG_ORDER
+    for joint in ("hip", "thigh", "calf")
+)
+
+POLICY_TO_ROBOT = np.array(
+    [
+        ROBOT_LEG_ORDER.index(policy_leg) * JOINTS_PER_LEG + joint_index
+        for policy_leg in POLICY_LEG_ORDER
+        for joint_index in range(JOINTS_PER_LEG)
+    ],
+    dtype=np.int64,
+)
 ROBOT_TO_POLICY = POLICY_TO_ROBOT.copy()
-FOOT_POLICY_TO_ROBOT = np.array([1, 0, 3, 2], dtype=np.int64)
+FOOT_POLICY_TO_ROBOT = np.array([ROBOT_LEG_ORDER.index(leg) for leg in POLICY_LEG_ORDER], dtype=np.int64)
 FOOT_ROBOT_TO_POLICY = FOOT_POLICY_TO_ROBOT.copy()
 
 
