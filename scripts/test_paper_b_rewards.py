@@ -6,19 +6,27 @@ from mini_gym.envs.base.paper_b_rewards import (
     PAPER_B_NEGATIVE_REWARDS,
     PAPER_B_POSITIVE_REWARDS,
     paper_b_airtime_piecewise,
+    paper_b_reward_gate,
     paper_b_total_reward,
 )
 
 
 class PaperBRewardHelperTest(unittest.TestCase):
-    def test_total_reward_uses_positive_times_exponentiated_negative(self):
+    def test_total_reward_uses_positive_times_clamped_exponentiated_negative(self):
         positive = np.array([6.0, 3.0], dtype=np.float32)
-        negative = np.array([0.0, -2.0], dtype=np.float32)
+        negative = np.array([0.0, -200.0], dtype=np.float32)
 
-        total = paper_b_total_reward(positive, negative, exponential_scale=0.2)
+        total = paper_b_total_reward(positive, negative, exponential_scale=0.02, gate_floor=0.05)
 
-        np.testing.assert_allclose(total, positive * np.exp(0.2 * negative))
+        np.testing.assert_allclose(total, positive * np.array([1.0, 0.05], dtype=np.float32))
         self.assertEqual(total.shape, positive.shape)
+
+    def test_reward_gate_is_bounded_by_floor_and_one(self):
+        negative = np.array([10.0, 0.0, -1.0e6], dtype=np.float32)
+
+        gate = paper_b_reward_gate(negative, exponential_scale=0.02, gate_floor=0.05)
+
+        np.testing.assert_allclose(gate, np.array([1.0, 1.0, 0.05], dtype=np.float32), atol=1e-6)
 
     def test_airtime_piecewise_shape_and_stance_branch(self):
         feet_air_time = np.array([[0.12, 0.12, 0.12, 0.12]], dtype=np.float32)

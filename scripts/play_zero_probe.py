@@ -192,11 +192,14 @@ def set_default_hip_outward(base_env, hip_out_deg: float | None) -> list[tuple[s
     return changed
 
 
-def force_level_default_zero_command(env: HistoryWrapper):
+def force_level_default_zero_command(env: HistoryWrapper, zero_joints: bool = False):
     base_env = env.env
     env_ids = torch.tensor([0], dtype=torch.long, device=base_env.device)
 
-    dof_pos = base_env.default_dof_pos.unsqueeze(0).repeat(len(env_ids), 1)
+    if zero_joints:
+        dof_pos = torch.zeros_like(base_env.default_dof_pos).repeat(len(env_ids), 1)
+    else:
+        dof_pos = base_env.default_dof_pos.repeat(len(env_ids), 1)
     base_state = base_env.base_init_state.clone().view(1, -1)
     base_state[:, :3] += base_env.env_origins[env_ids]
     base_state[:, 3:7] = torch.tensor([0.0, 0.0, 0.0, 1.0], device=base_env.device)
@@ -392,6 +395,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--angles-only", action="store_true", help="only print policy input/output joint angles")
     parser.add_argument("--skip-initial-probe", action="store_true", help="only run rollout; skip reset/repeat probes")
     parser.add_argument("--hip-out-deg", type=float, default=None, help="set default hip/abad outward angle in degrees")
+    parser.add_argument("--zero-joints", action="store_true", help="place the robot with all joint angles set to zero")
     parser.add_argument("--hold-seconds", type=float, default=0.0, help="keep Isaac Gym viewer open after rollout")
     parser.set_defaults(compare_jit=True)
     parser.add_argument("--no-compare-jit", action="store_false", dest="compare_jit")
@@ -406,7 +410,7 @@ def main() -> None:
 
     env.reset()
     hip_pose = set_default_hip_outward(base_env, args.hip_out_deg)
-    obs = force_level_default_zero_command(env)
+    obs = force_level_default_zero_command(env, zero_joints=args.zero_joints)
     history_zero = torch.zeros(1, Cfg.env.num_observations * Cfg.env.num_observation_history, device=base_env.device)
     history_repeat = obs.repeat(1, Cfg.env.num_observation_history)
 

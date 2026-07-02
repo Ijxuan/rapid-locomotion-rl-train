@@ -1,5 +1,7 @@
 """Paper B reward helpers that are independent from Isaac Gym."""
 
+import math
+
 PAPER_B_POSITIVE_REWARDS = (
     "tracking_lin_vel",
     "tracking_ang_vel",
@@ -20,14 +22,28 @@ PAPER_B_NEGATIVE_REWARDS = (
 )
 
 
-def paper_b_total_reward(positive_reward, negative_reward, exponential_scale=0.2):
+def paper_b_reward_gate(negative_reward, exponential_scale=0.02, gate_floor=0.05):
     exponent = exponential_scale * negative_reward
-    if hasattr(exponent, "exp"):
-        return positive_reward * exponent.exp()
+    min_exponent = math.log(gate_floor) if gate_floor and gate_floor > 0.0 else None
+    if hasattr(exponent, "clamp"):
+        if min_exponent is None:
+            exponent = exponent.clamp(max=0.0)
+        else:
+            exponent = exponent.clamp(min=min_exponent, max=0.0)
+        return exponent.exp()
 
     import numpy as np
 
-    return positive_reward * np.exp(exponent)
+    if min_exponent is None:
+        exponent = np.minimum(exponent, 0.0)
+    else:
+        exponent = np.clip(exponent, min_exponent, 0.0)
+    return np.exp(exponent)
+
+
+def paper_b_total_reward(positive_reward, negative_reward, exponential_scale=0.02, gate_floor=0.05):
+    gate = paper_b_reward_gate(negative_reward, exponential_scale, gate_floor)
+    return positive_reward * gate
 
 
 def paper_b_airtime_piecewise(

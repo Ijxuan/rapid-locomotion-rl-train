@@ -1,5 +1,7 @@
 runs
 paper
+.history
+
 # Jaynes secret files
 .secret*
 # ml_logger cache files

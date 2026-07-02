@@ -20,6 +20,7 @@ from .paper_b_rewards import (
     PAPER_B_NEGATIVE_REWARDS,
     PAPER_B_POSITIVE_REWARDS,
     paper_b_airtime_piecewise,
+    paper_b_reward_gate,
     paper_b_total_reward,
 )
 from .paper_b_observation import (
@@ -33,6 +34,14 @@ from .legged_robot_config import Cfg
 
 
 class LeggedRobot(BaseTask):
+    PAPER_B_DIAGNOSTIC_REWARD_NAMES = (
+        "paper_b_positive_reward",
+        "paper_b_negative_reward",
+        "paper_b_gate",
+        "paper_b_nontermination_reward",
+    )
+    PAPER_B_AVERAGE_DIAGNOSTICS = ("paper_b_gate",)
+
     def __init__(self, cfg: Cfg, sim_params, physics_engine, sim_device, headless, eval_cfg=None,
                  initial_dynamics_dict=None):
         """ Parses the provided config file,
@@ -265,6 +274,7 @@ class LeggedRobot(BaseTask):
         self.last_contacts[env_ids] = False
         if self.cfg.env.use_paper_b_observation:
             self._reset_paper_b_history_buffers(env_ids)
+        episode_lengths = torch.clamp(self.episode_length_buf.clone().float(), min=1.0)
         self.episode_length_buf[env_ids] = 0
         self.reset_buf[env_ids] = 1
         # fill extras
@@ -272,8 +282,10 @@ class LeggedRobot(BaseTask):
         if len(train_env_ids) > 0:
             self.extras["train/episode"] = {}
             for key in self.episode_sums.keys():
-                self.extras["train/episode"]['rew_' + key] = torch.mean(
-                    self.episode_sums[key][train_env_ids])  # / self.cfg.env.episode_length_s
+                episode_values = self.episode_sums[key][train_env_ids]
+                if key in self.PAPER_B_AVERAGE_DIAGNOSTICS:
+                    episode_values = episode_values / episode_lengths[train_env_ids]
+                self.extras["train/episode"]['rew_' + key] = torch.mean(episode_values)
                 self.episode_sums[key][train_env_ids] = 0.
         eval_env_ids = env_ids[env_ids >= self.num_train_envs]
         if len(eval_env_ids) > 0:
@@ -371,11 +383,27 @@ class LeggedRobot(BaseTask):
             self.episode_sums[name] += rew
             self.command_sums[name] += rew
 
-        self.rew_buf[:] = paper_b_total_reward(
+        reward_gate = paper_b_reward_gate(
+            negative_reward,
+            self.cfg.rewards.paper_b_reward_exponential_scale,
+            self.cfg.rewards.paper_b_reward_gate_floor,
+        )
+        nontermination_reward = paper_b_total_reward(
             positive_reward,
             negative_reward,
             self.cfg.rewards.paper_b_reward_exponential_scale,
+            self.cfg.rewards.paper_b_reward_gate_floor,
         )
+        self.rew_buf[:] = nontermination_reward
+
+        self.episode_sums["paper_b_positive_reward"] += positive_reward
+        self.episode_sums["paper_b_negative_reward"] += negative_reward
+        self.episode_sums["paper_b_gate"] += reward_gate
+        self.episode_sums["paper_b_nontermination_reward"] += nontermination_reward
+        self.command_sums["paper_b_positive_reward"] += positive_reward
+        self.command_sums["paper_b_negative_reward"] += negative_reward
+        self.command_sums["paper_b_gate"] += reward_gate
+        self.command_sums["paper_b_nontermination_reward"] += nontermination_reward
 
         if "termination" in self.reward_scales:
             termination_penalty = self._reward_termination() * self.cfg.rewards.paper_b_termination_penalty
@@ -1411,9 +1439,13 @@ class LeggedRobot(BaseTask):
             for name in self.reward_scales.keys()}
         self.episode_sums["total"] = torch.zeros(self.num_envs, dtype=torch.float, device=self.device,
                                                  requires_grad=False)
+        if self.cfg.rewards.use_paper_b_reward:
+            for name in self.PAPER_B_DIAGNOSTIC_REWARD_NAMES:
+                self.episode_sums[name] = torch.zeros(
+                    self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
         self.episode_sums_eval = {
             name: -1 * torch.ones(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
-            for name in self.reward_scales.keys()}
+            for name in self.episode_sums.keys()}
         self.episode_sums_eval["total"] = torch.zeros(self.num_envs, dtype=torch.float, device=self.device,
                                                       requires_grad=False)
         self.command_sums = {
@@ -1421,6 +1453,10 @@ class LeggedRobot(BaseTask):
             for name in
             list(self.reward_scales.keys()) + ["lin_vel_raw", "ang_vel_raw", "lin_vel_residual", "ang_vel_residual",
                                                "ep_timesteps"]}
+        if self.cfg.rewards.use_paper_b_reward:
+            for name in self.PAPER_B_DIAGNOSTIC_REWARD_NAMES:
+                self.command_sums[name] = torch.zeros(
+                    self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
 
     def _create_ground_plane(self):
         """ Adds a ground plane to the simulation, sets friction and restitution based on the cfg.

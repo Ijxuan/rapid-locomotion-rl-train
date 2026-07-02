@@ -43,7 +43,8 @@ def apply_paper_b_common_defaults(cfg):
 
     cfg.rewards.use_paper_b_reward = True
     cfg.rewards.only_positive_rewards = False
-    cfg.rewards.paper_b_reward_exponential_scale = 0.2
+    cfg.rewards.paper_b_reward_exponential_scale = 0.02
+    cfg.rewards.paper_b_reward_gate_floor = 0.05
     cfg.rewards.paper_b_desired_foot_height = 0.09
     cfg.rewards.paper_b_termination_penalty = -10.0
     cfg.rewards.paper_b_stance_command_threshold = 0.1
@@ -71,6 +72,7 @@ def apply_paper_b_common_defaults(cfg):
     cfg.rewards.scales.action_smoothness_2 = -1.2
     cfg.rewards.scales.base_motion = -1.5
     cfg.rewards.scales.termination = -10.0
+    cfg.normalization.clip_actions = 1.0
 
     cfg.domain_rand.randomize_friction = True
     cfg.domain_rand.friction_range = [0.4, 1.0]

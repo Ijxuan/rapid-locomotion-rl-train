@@ -31,6 +31,7 @@ def fake_cfg():
         rewards=SimpleNamespace(scales=SimpleNamespace()),
         domain_rand=SimpleNamespace(),
         init_state=SimpleNamespace(),
+        normalization=SimpleNamespace(),
         asset=SimpleNamespace(),
     )
 
@@ -158,9 +159,11 @@ class PaperBLayoutTest(unittest.TestCase):
         for name, value in expected_reward_scales.items():
             self.assertEqual(getattr(cfg.rewards.scales, name), value)
 
-        self.assertEqual(cfg.rewards.paper_b_reward_exponential_scale, 0.2)
+        self.assertEqual(cfg.rewards.paper_b_reward_exponential_scale, 0.02)
+        self.assertEqual(cfg.rewards.paper_b_reward_gate_floor, 0.05)
         self.assertEqual(cfg.rewards.paper_b_desired_foot_height, 0.09)
         self.assertEqual(cfg.rewards.paper_b_termination_penalty, -10.0)
+        self.assertEqual(cfg.normalization.clip_actions, 1.0)
 
         self.assertEqual(cfg.domain_rand.friction_range, [0.4, 1.0])
         self.assertEqual(cfg.domain_rand.obs_noise_dof_pos, [-0.05, 0.05])
