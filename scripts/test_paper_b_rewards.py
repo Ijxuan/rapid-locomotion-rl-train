@@ -72,6 +72,7 @@ class PaperBRewardHelperTest(unittest.TestCase):
         )
         self.assertIn("action_smoothness_2", PAPER_B_NEGATIVE_REWARDS)
         self.assertIn("base_motion", PAPER_B_NEGATIVE_REWARDS)
+        self.assertIn("moving_stand_still", PAPER_B_NEGATIVE_REWARDS)
 
 
 if __name__ == "__main__":

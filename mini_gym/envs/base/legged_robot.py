@@ -41,6 +41,19 @@ class LeggedRobot(BaseTask):
         "paper_b_nontermination_reward",
     )
     PAPER_B_AVERAGE_DIAGNOSTICS = ("paper_b_gate",)
+    VELOCITY_DIAGNOSTIC_NAMES = (
+        "mean_cmd_vx",
+        "mean_base_vx",
+        "mean_abs_vx_error",
+        "mean_cmd_vy",
+        "mean_base_vy",
+        "mean_abs_vy_error",
+        "mean_cmd_yaw",
+        "mean_base_yaw_rate",
+        "mean_abs_yaw_error",
+        "moving_cmd_fraction",
+        "moving_standstill_fraction",
+    )
 
     def __init__(self, cfg: Cfg, sim_params, physics_engine, sim_device, headless, eval_cfg=None,
                  initial_dynamics_dict=None):
@@ -287,6 +300,10 @@ class LeggedRobot(BaseTask):
                     episode_values = episode_values / episode_lengths[train_env_ids]
                 self.extras["train/episode"]['rew_' + key] = torch.mean(episode_values)
                 self.episode_sums[key][train_env_ids] = 0.
+            for key in self.VELOCITY_DIAGNOSTIC_NAMES:
+                episode_values = self.episode_metric_sums[key][train_env_ids] / episode_lengths[train_env_ids]
+                self.extras["train/episode"][key] = torch.mean(episode_values)
+                self.episode_metric_sums[key][train_env_ids] = 0.
         eval_env_ids = env_ids[env_ids >= self.num_train_envs]
         if len(eval_env_ids) > 0:
             self.extras["eval/episode"] = {}
@@ -295,6 +312,10 @@ class LeggedRobot(BaseTask):
                 unset_eval_envs = eval_env_ids[self.episode_sums_eval[key][eval_env_ids] == -1]
                 self.episode_sums_eval[key][unset_eval_envs] = self.episode_sums[key][unset_eval_envs]
                 self.episode_sums[key][eval_env_ids] = 0.
+            for key in self.VELOCITY_DIAGNOSTIC_NAMES:
+                episode_values = self.episode_metric_sums[key][eval_env_ids] / episode_lengths[eval_env_ids]
+                self.extras["eval/episode"][key] = torch.mean(episode_values)
+                self.episode_metric_sums[key][eval_env_ids] = 0.
 
         # log additional curriculum info
         if self.cfg.terrain.curriculum:
@@ -364,6 +385,7 @@ class LeggedRobot(BaseTask):
         self.command_sums["lin_vel_residual"] += (self.base_lin_vel[:, 0] - self.commands[:, 0]) ** 2
         self.command_sums["ang_vel_residual"] += (self.base_ang_vel[:, 2] - self.commands[:, 2]) ** 2
         self.command_sums["ep_timesteps"] += 1
+        self._accumulate_velocity_tracking_diagnostics()
 
     def _compute_paper_b_reward(self):
         positive_reward = torch.zeros_like(self.rew_buf)
@@ -417,6 +439,26 @@ class LeggedRobot(BaseTask):
         self.command_sums["lin_vel_residual"] += (self.base_lin_vel[:, 0] - self.commands[:, 0]) ** 2
         self.command_sums["ang_vel_residual"] += (self.base_ang_vel[:, 2] - self.commands[:, 2]) ** 2
         self.command_sums["ep_timesteps"] += 1
+        self._accumulate_velocity_tracking_diagnostics()
+
+    def _accumulate_velocity_tracking_diagnostics(self):
+        vx_error = self.commands[:, 0] - self.base_lin_vel[:, 0]
+        vy_error = self.commands[:, 1] - self.base_lin_vel[:, 1]
+        yaw_error = self.commands[:, 2] - self.base_ang_vel[:, 2]
+        moving_command = torch.abs(self.commands[:, 0]) > self.cfg.rewards.moving_stand_still_command_threshold
+        standing_still = torch.abs(self.base_lin_vel[:, 0]) < self.cfg.rewards.moving_stand_still_velocity_threshold
+
+        self.episode_metric_sums["mean_cmd_vx"] += self.commands[:, 0]
+        self.episode_metric_sums["mean_base_vx"] += self.base_lin_vel[:, 0]
+        self.episode_metric_sums["mean_abs_vx_error"] += torch.abs(vx_error)
+        self.episode_metric_sums["mean_cmd_vy"] += self.commands[:, 1]
+        self.episode_metric_sums["mean_base_vy"] += self.base_lin_vel[:, 1]
+        self.episode_metric_sums["mean_abs_vy_error"] += torch.abs(vy_error)
+        self.episode_metric_sums["mean_cmd_yaw"] += self.commands[:, 2]
+        self.episode_metric_sums["mean_base_yaw_rate"] += self.base_ang_vel[:, 2]
+        self.episode_metric_sums["mean_abs_yaw_error"] += torch.abs(yaw_error)
+        self.episode_metric_sums["moving_cmd_fraction"] += moving_command.float()
+        self.episode_metric_sums["moving_standstill_fraction"] += (moving_command & standing_still).float()
 
     def compute_observations(self):
         """ Computes observations
@@ -974,8 +1016,12 @@ class LeggedRobot(BaseTask):
         self.paper_b_previous_dof_pos[env_ids] = self.dof_pos[env_ids]
         self.paper_b_previous_dof_vel[env_ids] = self.dof_vel[env_ids]
         reuse_probability = self.cfg.init_state.paper_b_reuse_previous_state_probability
-        self.paper_b_reuse_previous_state[env_ids] = torch.rand(
+        min_reuse_steps = self.cfg.init_state.paper_b_reuse_previous_state_min_steps
+        valid_reuse_mask = self.episode_length_buf[env_ids] >= min_reuse_steps
+        random_reuse_mask = torch.rand(
             len(env_ids), dtype=torch.float, device=self.device) < reuse_probability
+        self.paper_b_previous_state_valid[env_ids] = valid_reuse_mask
+        self.paper_b_reuse_previous_state[env_ids] = valid_reuse_mask & random_reuse_mask
 
     def _reset_paper_b_dofs(self, env_ids, cfg):
         dof_pos_noise = torch_rand_float(
@@ -1319,6 +1365,8 @@ class LeggedRobot(BaseTask):
         self.paper_b_previous_root_states = torch.zeros_like(self.root_states)
         self.paper_b_previous_dof_pos = torch.zeros_like(self.dof_pos)
         self.paper_b_previous_dof_vel = torch.zeros_like(self.dof_vel)
+        self.paper_b_previous_state_valid = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device,
+                                                        requires_grad=False)
         self.paper_b_reuse_previous_state = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device,
                                                         requires_grad=False)
 
@@ -1448,6 +1496,9 @@ class LeggedRobot(BaseTask):
             for name in self.episode_sums.keys()}
         self.episode_sums_eval["total"] = torch.zeros(self.num_envs, dtype=torch.float, device=self.device,
                                                       requires_grad=False)
+        self.episode_metric_sums = {
+            name: torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
+            for name in self.VELOCITY_DIAGNOSTIC_NAMES}
         self.command_sums = {
             name: torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
             for name in
@@ -2033,6 +2084,11 @@ class LeggedRobot(BaseTask):
         # Penalize motion at zero commands
         return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1) * (
                 torch.norm(self.commands[:, :2], dim=1) < 0.1)
+
+    def _reward_moving_stand_still(self):
+        moving_command = torch.abs(self.commands[:, 0]) > self.cfg.rewards.moving_stand_still_command_threshold
+        standing_still = torch.abs(self.base_lin_vel[:, 0]) < self.cfg.rewards.moving_stand_still_velocity_threshold
+        return (moving_command & standing_still).float()
 
     def _reward_feet_contact_forces(self):
         # penalize high contact forces

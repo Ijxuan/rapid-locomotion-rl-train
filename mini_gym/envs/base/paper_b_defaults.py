@@ -51,6 +51,8 @@ def apply_paper_b_common_defaults(cfg):
     cfg.rewards.paper_b_airtime_clip = 0.3
     cfg.rewards.paper_b_airtime_max = 0.25
     cfg.rewards.paper_b_airtime_cap = 0.2
+    cfg.rewards.moving_stand_still_command_threshold = 0.3
+    cfg.rewards.moving_stand_still_velocity_threshold = 0.15
     for reward_name in (
         "lin_vel_z", "ang_vel_xy", "base_height", "collision", "feet_stumble", "action_rate", "stand_still",
         "dof_pos_limits", "dof_vel_limits", "torque_limits", "tracking_lin_vel_lat", "tracking_lin_vel_long",
@@ -71,6 +73,7 @@ def apply_paper_b_common_defaults(cfg):
     cfg.rewards.scales.action_smoothness_1 = -2.5
     cfg.rewards.scales.action_smoothness_2 = -1.2
     cfg.rewards.scales.base_motion = -1.5
+    cfg.rewards.scales.moving_stand_still = -10.0
     cfg.rewards.scales.termination = -10.0
     cfg.normalization.clip_actions = 1.0
 
@@ -93,6 +96,7 @@ def apply_paper_b_common_defaults(cfg):
 
     cfg.init_state.paper_b_randomize_initial_state = True
     cfg.init_state.paper_b_reuse_previous_state_probability = 0.25
+    cfg.init_state.paper_b_reuse_previous_state_min_steps = 100
     cfg.init_state.noise_quat = [-0.2, 0.2]
     cfg.init_state.noise_dof_pos = [-0.2, 0.2]
     cfg.init_state.noise_dof_vel = [-2.5, 2.5]

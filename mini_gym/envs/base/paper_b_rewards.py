@@ -19,6 +19,7 @@ PAPER_B_NEGATIVE_REWARDS = (
     "action_smoothness_1",
     "action_smoothness_2",
     "base_motion",
+    "moving_stand_still",
 )
 
 

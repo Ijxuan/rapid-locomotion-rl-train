@@ -114,6 +114,7 @@ class Cfg(PrefixProto, cli=False):
         ang_vel = [0.0, 0.0, 0.0]  # x,y,z [rad/s]
         paper_b_randomize_initial_state = False
         paper_b_reuse_previous_state_probability = 0.25
+        paper_b_reuse_previous_state_min_steps = 100
         noise_quat = [-0.2, 0.2]
         noise_dof_pos = [-0.2, 0.2]
         noise_dof_vel = [-2.5, 2.5]
@@ -204,6 +205,8 @@ class Cfg(PrefixProto, cli=False):
         paper_b_airtime_clip = 0.3
         paper_b_airtime_max = 0.25
         paper_b_airtime_cap = 0.2
+        moving_stand_still_command_threshold = 0.3
+        moving_stand_still_velocity_threshold = 0.15
         tracking_sigma = 0.25  # tracking reward = exp(-error^2/sigma)
         tracking_sigma_lat = 0.25  # tracking reward = exp(-error^2/sigma)
         tracking_sigma_long = 0.25  # tracking reward = exp(-error^2/sigma)
@@ -240,6 +243,7 @@ class Cfg(PrefixProto, cli=False):
             action_smoothness_1 = 0.
             action_smoothness_2 = 0.
             base_motion = 0.
+            moving_stand_still = 0.
 
     class normalization(PrefixProto, cli=False):
         class obs_scales(PrefixProto, cli=False):

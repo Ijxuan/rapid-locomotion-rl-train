@@ -30,6 +30,7 @@ def _reward_title_zh(reward_key):
     "action_smoothness_1": "动作平滑惩罚1",
     "action_smoothness_2": "动作平滑惩罚2",
     "stand_still": "静止惩罚",
+    "moving_stand_still": "移动指令下原地惩罚",
     "command_area": "指令覆盖面积",
     "terrain_level": "地形等级",
     "max_command_yaw": "最大偏航指令",
@@ -37,6 +38,17 @@ def _reward_title_zh(reward_key):
     "paper_b_negative_reward": "Paper-B负项合计",
     "paper_b_gate": "Paper-B指数门控",
     "paper_b_nontermination_reward": "Paper-B非终止奖励",
+    "mean_cmd_vx": "平均目标前向速度",
+    "mean_base_vx": "平均实际前向速度",
+    "mean_abs_vx_error": "平均前向速度绝对误差",
+    "mean_cmd_vy": "平均目标横向速度",
+    "mean_base_vy": "平均实际横向速度",
+    "mean_abs_vy_error": "平均横向速度绝对误差",
+    "mean_cmd_yaw": "平均目标偏航角速度",
+    "mean_base_yaw_rate": "平均实际偏航角速度",
+    "mean_abs_yaw_error": "平均偏航角速度绝对误差",
+    "moving_cmd_fraction": "移动前向指令占比",
+    "moving_standstill_fraction": "移动指令下原地占比",
   }
   if reward_key in explicit_map:
     return explicit_map[reward_key]
@@ -78,16 +90,33 @@ def _reward_note_zh(reward_key):
     "action_smoothness_1",
     "action_smoothness_2",
     "stand_still",
+    "moving_stand_still",
     "paper_b_negative_reward",
+    "mean_abs_vx_error",
+    "mean_abs_vy_error",
+    "mean_abs_yaw_error",
+    "moving_standstill_fraction",
+  }
+  informational = {
+    "mean_cmd_vx",
+    "mean_base_vx",
+    "mean_cmd_vy",
+    "mean_base_vy",
+    "mean_cmd_yaw",
+    "mean_base_yaw_rate",
+    "moving_cmd_fraction",
   }
   if reward_key in bigger_is_better:
     return "备注：越大越好"
   if reward_key in smaller_is_better:
     return "备注：越小越好（更接近0更好）"
+  if reward_key in informational:
+    return "备注：诊断指标，用于对比目标和实际"
   return "备注：目标是稳定收敛"
 
 
-def _write_dashboard_charts(logger, reward_metric_keys):
+def _write_dashboard_charts(logger, reward_metric_keys, diagnostic_metric_keys=None):
+  diagnostic_metric_keys = diagnostic_metric_keys or []
   total_note = _reward_note_zh("total")
   chart_lines = [
     "charts:",
@@ -105,6 +134,15 @@ def _write_dashboard_charts(logger, reward_metric_keys):
     "  yKey: train/episode/command_area/mean",
     "  xKey: iterations",
   ])
+
+  for key in sorted(diagnostic_metric_keys):
+    note = _reward_note_zh(key)
+    chart_lines.extend([
+      f"- title: \"训练/{_reward_title_zh(key)}\\n{note}\"",
+      f"  description: {note}",
+      f"  yKey: train/episode/{key}/mean",
+      "  xKey: iterations",
+    ])
 
   for key in sorted(reward_metric_keys):
     if key == "rew_total":
@@ -172,7 +210,8 @@ def train_mc(headless=True, sim_device="cuda:0", num_learning_iterations=4000, p
     env = VelocityTrackingEasyEnv(sim_device=sim_device, headless=headless, cfg=Cfg)
 
     reward_metric_keys = [f"rew_{k}" for k in env.episode_sums.keys()]
-    _write_dashboard_charts(logger, reward_metric_keys)
+    diagnostic_metric_keys = list(getattr(env, "episode_metric_sums", {}).keys())
+    _write_dashboard_charts(logger, reward_metric_keys, diagnostic_metric_keys)
 
     # log the experiment parameters
     logger.log_params(AC_Args=vars(AC_Args), PPO_Args=vars(PPO_Args), RunnerArgs=vars(RunnerArgs),

@@ -125,6 +125,8 @@ class PaperBLayoutTest(unittest.TestCase):
         self.assertEqual(cfg.rewards.scales.tracking_lin_vel, 3.0)
         self.assertEqual(cfg.rewards.scales.feet_clearance, -15.0)
         self.assertEqual(cfg.rewards.paper_b_termination_penalty, -10.0)
+        self.assertEqual(cfg.rewards.moving_stand_still_command_threshold, 0.3)
+        self.assertEqual(cfg.rewards.moving_stand_still_velocity_threshold, 0.15)
 
         self.assertEqual(cfg.domain_rand.friction_range, [0.4, 1.0])
         self.assertTrue(cfg.domain_rand.randomize_friction)
@@ -155,6 +157,7 @@ class PaperBLayoutTest(unittest.TestCase):
             "action_smoothness_1": -2.5,
             "action_smoothness_2": -1.2,
             "base_motion": -1.5,
+            "moving_stand_still": -10.0,
         }
         for name, value in expected_reward_scales.items():
             self.assertEqual(getattr(cfg.rewards.scales, name), value)
@@ -163,6 +166,8 @@ class PaperBLayoutTest(unittest.TestCase):
         self.assertEqual(cfg.rewards.paper_b_reward_gate_floor, 0.05)
         self.assertEqual(cfg.rewards.paper_b_desired_foot_height, 0.09)
         self.assertEqual(cfg.rewards.paper_b_termination_penalty, -10.0)
+        self.assertEqual(cfg.rewards.moving_stand_still_command_threshold, 0.3)
+        self.assertEqual(cfg.rewards.moving_stand_still_velocity_threshold, 0.15)
         self.assertEqual(cfg.normalization.clip_actions, 1.0)
 
         self.assertEqual(cfg.domain_rand.friction_range, [0.4, 1.0])
@@ -185,6 +190,7 @@ class PaperBLayoutTest(unittest.TestCase):
 
         self.assertTrue(cfg.init_state.paper_b_randomize_initial_state)
         self.assertEqual(cfg.init_state.paper_b_reuse_previous_state_probability, 0.25)
+        self.assertEqual(cfg.init_state.paper_b_reuse_previous_state_min_steps, 100)
         self.assertEqual(cfg.init_state.noise_quat, [-0.2, 0.2])
         self.assertEqual(cfg.init_state.noise_dof_pos, [-0.2, 0.2])
         self.assertEqual(cfg.init_state.noise_dof_vel, [-2.5, 2.5])
