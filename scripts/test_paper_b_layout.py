@@ -20,6 +20,7 @@ from mini_gym.envs.base.paper_b_observation import (
     layout_width,
     observation_components,
 )
+from mini_gym.envs.mini_cheetah.mini_cheetah_config import config_mini_cheetah
 
 
 def fake_cfg():
@@ -27,6 +28,7 @@ def fake_cfg():
         env=SimpleNamespace(),
         control=SimpleNamespace(),
         sim=SimpleNamespace(dt=0.005),
+        terrain=SimpleNamespace(),
         commands=SimpleNamespace(),
         rewards=SimpleNamespace(scales=SimpleNamespace()),
         domain_rand=SimpleNamespace(),
@@ -135,9 +137,19 @@ class PaperBLayoutTest(unittest.TestCase):
         self.assertFalse(cfg.domain_rand.randomize_foot_radius)
         self.assertEqual(cfg.domain_rand.motor_friction_haa_hfe_range, [0.0, 0.3])
         self.assertEqual(cfg.domain_rand.motor_friction_kfe_range, [0.1, 0.7])
-        self.assertEqual(cfg.asset.foot_name, "calf")
+        self.assertEqual(cfg.asset.foot_name, "foot")
         self.assertEqual(cfg.asset.terminate_after_contacts_on, ["base", "trunk"])
         self.assertFalse(cfg.asset.collapse_fixed_joints)
+
+    def test_mini_cheetah_final_config_penalizes_calf_contacts(self):
+        cfg = fake_cfg()
+        config_mini_cheetah(cfg)
+
+        self.assertEqual(cfg.asset.foot_name, "foot")
+        self.assertEqual(cfg.asset.penalize_contacts_on, ["calf"])
+        self.assertEqual(cfg.rewards.scales.collision, -1.0)
+        self.assertEqual(cfg.control.stiffness, {"joint": 17.0, "calf_joint": 34.0})
+        self.assertEqual(cfg.control.damping, {"joint": 0.4, "calf_joint": 0.8})
 
     def test_common_defaults_match_paper_b_reward_and_randomization_tables(self):
         cfg = fake_cfg()

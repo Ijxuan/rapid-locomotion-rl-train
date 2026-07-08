@@ -53,6 +53,7 @@ def apply_paper_b_common_defaults(cfg):
     cfg.rewards.paper_b_airtime_cap = 0.2
     cfg.rewards.moving_stand_still_command_threshold = 0.3
     cfg.rewards.moving_stand_still_velocity_threshold = 0.15
+    cfg.rewards.moving_stand_still_progress_fraction = 0.2
     for reward_name in (
         "lin_vel_z", "ang_vel_xy", "base_height", "collision", "feet_stumble", "action_rate", "stand_still",
         "dof_pos_limits", "dof_vel_limits", "torque_limits", "tracking_lin_vel_lat", "tracking_lin_vel_long",
@@ -106,7 +107,7 @@ def apply_paper_b_common_defaults(cfg):
 
     if hasattr(cfg, "asset"):
         cfg.asset.terminate_after_contacts_on = ["base", "trunk"]
-        cfg.asset.foot_name = "calf"
+        cfg.asset.foot_name = "foot"
         cfg.asset.collapse_fixed_joints = False
 
 

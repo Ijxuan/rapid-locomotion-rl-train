@@ -34,6 +34,27 @@ class PaperBCommandAssetTest(unittest.TestCase):
 
         self.assertAlmostEqual(foot_sphere_radius_from_urdf(urdf), 0.0175)
 
+    def test_standard_mini_cheetah_has_four_fixed_sphere_feet(self):
+        import xml.etree.ElementTree as ET
+
+        root = Path(__file__).resolve().parents[1]
+        urdf = root / "resources/robots/mini_cheetah/urdf/mini_cheetah.urdf"
+        tree = ET.parse(urdf)
+        links = {link.attrib["name"]: link for link in tree.getroot().findall("link")}
+        joints = {joint.attrib["name"]: joint for joint in tree.getroot().findall("joint")}
+
+        self.assertAlmostEqual(foot_sphere_radius_from_urdf(urdf), 0.02)
+        for leg in ("FR", "FL", "RR", "RL"):
+            foot_name = f"{leg}_foot"
+            joint = joints[f"{leg}_foot_fixed"]
+            self.assertIn(foot_name, links)
+            self.assertEqual(joint.attrib["type"], "fixed")
+            self.assertEqual(joint.find("parent").attrib["link"], f"{leg}_calf")
+            self.assertEqual(joint.find("child").attrib["link"], foot_name)
+            spheres = links[foot_name].findall(".//sphere")
+            self.assertTrue(spheres)
+            self.assertTrue(all(float(sphere.attrib["radius"]) == 0.02 for sphere in spheres))
+
     def test_sphere_foot_urdf_variants_are_written_with_requested_radii(self):
         root = Path(__file__).resolve().parents[1]
         urdf = root / "resources/robots/mini_cheetah/urdf/mini_cheetah_simple.urdf"
@@ -53,7 +74,7 @@ class PaperBCommandAssetTest(unittest.TestCase):
 
         self.assertIn("mini_cheetah.urdf", source)
         self.assertNotIn("mini_cheetah_simple.urdf", source)
-        self.assertIn('_.foot_name = "calf"', source)
+        self.assertIn('_.foot_name = "foot"', source)
         self.assertIn("_.randomize_foot_radius = False", source)
         self.assertIn("_.collapse_fixed_joints = False", source)
 

@@ -59,6 +59,9 @@ def disable_randomization() -> None:
 
 def configure_single_env() -> None:
     config_mini_cheetah(Cfg)
+    # Pose viewers are asset checks; keep them usable while temporarily hiding
+    # one foot link for visual comparison.
+    Cfg.env.use_paper_b_observation = False
     disable_randomization()
     Cfg.env.num_envs = 1
     Cfg.env.num_recording_envs = 1

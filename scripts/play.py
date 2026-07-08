@@ -12,7 +12,6 @@ from pathlib import Path
 import numpy as np
 import torch
 from isaacgym import gymapi, gymtorch
-from isaacgym.torch_utils import quat_rotate_inverse
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -29,9 +28,9 @@ from tqdm import tqdm
 
 ESTIMATOR_JIT_NAME = "estimator_latest.jit"
 BODY_JIT_NAME = "body_latest.jit"
-DEFAULT_X_VEL_COMMANDS = [1.0, 2.0, -0.5]
+DEFAULT_X_VEL_COMMANDS = [0.0, 3.0, 4.5]
 DEFAULT_YAW_VEL_COMMANDS = [1.0]
-SECONDS_PER_COMMAND = 1.5
+SECONDS_PER_COMMAND = 5
 
 # Set these to floats to test playback-only PD gains, e.g. 20.0 / 0.6.
 # None keeps the gains saved by the training run.
@@ -39,9 +38,41 @@ EVAL_KP_OVERRIDE = None
 EVAL_KD_OVERRIDE = None
 
 
+def disable_torchscript_cuda_fusers():
+    # PyTorch 1.10 + newer GPUs can fail NVRTC arch detection in TorchScript CUDA fusers.
+    for setter_name in (
+        "_jit_set_nvfuser_enabled",
+        "_jit_set_texpr_fuser_enabled",
+        "_jit_override_can_fuse_on_gpu",
+    ):
+        setter = getattr(torch._C, setter_name, None)
+        if setter is None:
+            continue
+        try:
+            setter(False)
+        except RuntimeError:
+            pass
+
+
+disable_torchscript_cuda_fusers()
+
+
 def quat_xyzw_to_yaw(quat_xyzw):
     x, y, z, w = quat_xyzw
     return np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+def quat_rotate_inverse_nojit(q, v):
+    original_shape = v.shape
+    q = q.reshape(-1, 4)
+    v = v.reshape(-1, 3)
+    q_xyz = q[:, :3]
+    q_w = q[:, 3:4]
+
+    a = v * (2.0 * q_w.square() - 1.0)
+    b = 2.0 * q_w * torch.cross(q_xyz, v, dim=-1)
+    c = 2.0 * q_xyz * torch.sum(q_xyz * v, dim=-1, keepdim=True)
+    return (a - b + c).reshape(original_shape)
 
 
 def is_plain_value(value) -> bool:
@@ -187,9 +218,9 @@ def sync_eval_history(env, base_env):
 
 def sync_eval_base_kinematics(base_env):
     base_env.base_quat[:] = base_env.root_states[:, 3:7]
-    base_env.base_lin_vel[:] = quat_rotate_inverse(base_env.base_quat, base_env.root_states[:, 7:10])
-    base_env.base_ang_vel[:] = quat_rotate_inverse(base_env.base_quat, base_env.root_states[:, 10:13])
-    base_env.projected_gravity[:] = quat_rotate_inverse(base_env.base_quat, base_env.gravity_vec)
+    base_env.base_lin_vel[:] = quat_rotate_inverse_nojit(base_env.base_quat, base_env.root_states[:, 7:10])
+    base_env.base_ang_vel[:] = quat_rotate_inverse_nojit(base_env.base_quat, base_env.root_states[:, 10:13])
+    base_env.projected_gravity[:] = quat_rotate_inverse_nojit(base_env.base_quat, base_env.gravity_vec)
 
 
 def set_eval_default_stance(env, base_env):

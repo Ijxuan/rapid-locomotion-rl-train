@@ -181,6 +181,31 @@
         </collision>
     </link>
 
+    <joint name="FR_foot_fixed" type="fixed">
+        <parent link="FR_calf"/>
+        <child link="FR_foot"/>
+        <origin rpy="0 0 0" xyz="0 0 -0.19"/>
+    </joint>
+    <link name="FR_foot">
+        <inertial>
+            <mass value="0.001"/>
+            <origin xyz="0 0 0"/>
+            <inertia ixx="0.000001" ixy="0" ixz="0" iyy="0.000001" iyz="0" izz="0.000001"/>
+        </inertial>
+        <visual>
+            <geometry>
+                <sphere radius="0.020"/>
+            </geometry>
+            <origin rpy="0 0 0" xyz="0 0 0"/>
+        </visual>
+        <collision>
+            <geometry>
+                <sphere radius="0.020"/>
+            </geometry>
+            <origin rpy="0 0 0" xyz="0 0 0"/>
+        </collision>
+    </link>
+
 <!--!!!!!!!!!!!! Front Left Leg !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!-->
     <joint name="FL_hip_joint" type="revolute">
         <axis xyz="1 0 0"/>
@@ -265,6 +290,31 @@
                 <mesh filename="meshes/mini_lower_link.obj"/>
             </geometry>
             <origin rpy="0 3.141592 0.0" xyz="0 0 0"/>
+        </collision>
+    </link>
+
+    <joint name="FL_foot_fixed" type="fixed">
+        <parent link="FL_calf"/>
+        <child link="FL_foot"/>
+        <origin rpy="0 0 0" xyz="0 0 -0.19"/>
+    </joint>
+    <link name="FL_foot">
+        <inertial>
+            <mass value="0.001"/>
+            <origin xyz="0 0 0"/>
+            <inertia ixx="0.000001" ixy="0" ixz="0" iyy="0.000001" iyz="0" izz="0.000001"/>
+        </inertial>
+        <visual>
+            <geometry>
+                <sphere radius="0.020"/>
+            </geometry>
+            <origin rpy="0 0 0" xyz="0 0 0"/>
+        </visual>
+        <collision>
+            <geometry>
+                <sphere radius="0.020"/>
+            </geometry>
+            <origin rpy="0 0 0" xyz="0 0 0"/>
         </collision>
     </link>
 
@@ -361,6 +411,31 @@
         </collision>
     </link>
 
+    <joint name="RR_foot_fixed" type="fixed">
+        <parent link="RR_calf"/>
+        <child link="RR_foot"/>
+        <origin rpy="0 0 0" xyz="0 0 -0.19"/>
+    </joint>
+    <link name="RR_foot">
+        <inertial>
+            <mass value="0.001"/>
+            <origin xyz="0 0 0"/>
+            <inertia ixx="0.000001" ixy="0" ixz="0" iyy="0.000001" iyz="0" izz="0.000001"/>
+        </inertial>
+        <visual>
+            <geometry>
+                <sphere radius="0.020"/>
+            </geometry>
+            <origin rpy="0 0 0" xyz="0 0 0"/>
+        </visual>
+        <collision>
+            <geometry>
+                <sphere radius="0.020"/>
+            </geometry>
+            <origin rpy="0 0 0" xyz="0 0 0"/>
+        </collision>
+    </link>
+
 <!--!!!!!!!!!!!! Hind Left Leg !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!-->
     <joint name="RL_hip_joint" type="revolute">
         <axis xyz="1 0 0"/>
@@ -451,6 +526,31 @@
                 <mesh filename="meshes/mini_lower_link.obj"/>
             </geometry>
             <origin rpy="0 3.141592 0.0" xyz="0 0 0"/>
+        </collision>
+    </link>
+
+    <joint name="RL_foot_fixed" type="fixed">
+        <parent link="RL_calf"/>
+        <child link="RL_foot"/>
+        <origin rpy="0 0 0" xyz="0 0 -0.19"/>
+    </joint>
+    <link name="RL_foot">
+        <inertial>
+            <mass value="0.001"/>
+            <origin xyz="0 0 0"/>
+            <inertia ixx="0.000001" ixy="0" ixz="0" iyy="0.000001" iyz="0" izz="0.000001"/>
+        </inertial>
+        <visual>
+            <geometry>
+                <sphere radius="0.020"/>
+            </geometry>
+            <origin rpy="0 0 0" xyz="0 0 0"/>
+        </visual>
+        <collision>
+            <geometry>
+                <sphere radius="0.020"/>
+            </geometry>
+            <origin rpy="0 0 0" xyz="0 0 0"/>
         </collision>
     </link>
 

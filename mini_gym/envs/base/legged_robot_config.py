@@ -207,6 +207,7 @@ class Cfg(PrefixProto, cli=False):
         paper_b_airtime_cap = 0.2
         moving_stand_still_command_threshold = 0.3
         moving_stand_still_velocity_threshold = 0.15
+        moving_stand_still_progress_fraction = 0.2
         tracking_sigma = 0.25  # tracking reward = exp(-error^2/sigma)
         tracking_sigma_lat = 0.25  # tracking reward = exp(-error^2/sigma)
         tracking_sigma_long = 0.25  # tracking reward = exp(-error^2/sigma)

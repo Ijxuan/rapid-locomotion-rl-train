@@ -17,9 +17,11 @@ from mini_gym.utils.terrain import Terrain
 from .paper_b_assets import foot_radius_buckets, foot_sphere_radius_from_urdf, generate_sphere_foot_urdf_variants
 from .paper_b_commands import paper_b_vx_range
 from .paper_b_rewards import (
+    PAPER_B_DIRECT_REWARDS,
     PAPER_B_NEGATIVE_REWARDS,
     PAPER_B_POSITIVE_REWARDS,
     paper_b_airtime_piecewise,
+    paper_b_moving_speed_deficit,
     paper_b_reward_gate,
     paper_b_total_reward,
 )
@@ -390,12 +392,15 @@ class LeggedRobot(BaseTask):
     def _compute_paper_b_reward(self):
         positive_reward = torch.zeros_like(self.rew_buf)
         negative_reward = torch.zeros_like(self.rew_buf)
+        direct_reward = torch.zeros_like(self.rew_buf)
 
         for i in range(len(self.reward_functions)):
             name = self.reward_names[i]
             rew = self.reward_functions[i]() * self.reward_scales[name]
             if name in PAPER_B_POSITIVE_REWARDS:
                 positive_reward += rew
+            elif name in PAPER_B_DIRECT_REWARDS:
+                direct_reward += rew
             elif name in PAPER_B_NEGATIVE_REWARDS:
                 negative_reward += rew
             elif self.reward_scales[name] >= 0.0:
@@ -410,12 +415,13 @@ class LeggedRobot(BaseTask):
             self.cfg.rewards.paper_b_reward_exponential_scale,
             self.cfg.rewards.paper_b_reward_gate_floor,
         )
-        nontermination_reward = paper_b_total_reward(
+        gated_positive_reward = paper_b_total_reward(
             positive_reward,
             negative_reward,
             self.cfg.rewards.paper_b_reward_exponential_scale,
             self.cfg.rewards.paper_b_reward_gate_floor,
         )
+        nontermination_reward = gated_positive_reward + direct_reward
         self.rew_buf[:] = nontermination_reward
 
         self.episode_sums["paper_b_positive_reward"] += positive_reward
@@ -446,7 +452,7 @@ class LeggedRobot(BaseTask):
         vy_error = self.commands[:, 1] - self.base_lin_vel[:, 1]
         yaw_error = self.commands[:, 2] - self.base_ang_vel[:, 2]
         moving_command = torch.abs(self.commands[:, 0]) > self.cfg.rewards.moving_stand_still_command_threshold
-        standing_still = torch.abs(self.base_lin_vel[:, 0]) < self.cfg.rewards.moving_stand_still_velocity_threshold
+        moving_speed_deficit = self._moving_speed_deficit()
 
         self.episode_metric_sums["mean_cmd_vx"] += self.commands[:, 0]
         self.episode_metric_sums["mean_base_vx"] += self.base_lin_vel[:, 0]
@@ -458,7 +464,7 @@ class LeggedRobot(BaseTask):
         self.episode_metric_sums["mean_base_yaw_rate"] += self.base_ang_vel[:, 2]
         self.episode_metric_sums["mean_abs_yaw_error"] += torch.abs(yaw_error)
         self.episode_metric_sums["moving_cmd_fraction"] += moving_command.float()
-        self.episode_metric_sums["moving_standstill_fraction"] += (moving_command & standing_still).float()
+        self.episode_metric_sums["moving_standstill_fraction"] += (moving_speed_deficit > 0.0).float()
 
     def compute_observations(self):
         """ Computes observations
@@ -1329,13 +1335,12 @@ class LeggedRobot(BaseTask):
             name = self.dof_names[i]
             angle = self.cfg.init_state.default_joint_angles[name]
             self.default_dof_pos[i] = angle
-            found = False
-            for dof_name in self.cfg.control.stiffness.keys():
-                if dof_name in name:
-                    self.p_gains[i] = self.cfg.control.stiffness[dof_name]
-                    self.d_gains[i] = self.cfg.control.damping[dof_name]
-                    found = True
-            if not found:
+            matching_dof_names = [dof_name for dof_name in self.cfg.control.stiffness.keys() if dof_name in name]
+            if matching_dof_names:
+                dof_name = max(matching_dof_names, key=len)
+                self.p_gains[i] = self.cfg.control.stiffness[dof_name]
+                self.d_gains[i] = self.cfg.control.damping[dof_name]
+            else:
                 self.p_gains[i] = 0.
                 self.d_gains[i] = 0.
                 if self.cfg.control.control_type in ["P", "V"]:
@@ -2085,10 +2090,17 @@ class LeggedRobot(BaseTask):
         return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1) * (
                 torch.norm(self.commands[:, :2], dim=1) < 0.1)
 
+    def _moving_speed_deficit(self):
+        return paper_b_moving_speed_deficit(
+            self.commands[:, 0],
+            self.base_lin_vel[:, 0],
+            self.cfg.rewards.moving_stand_still_command_threshold,
+            self.cfg.rewards.moving_stand_still_velocity_threshold,
+            getattr(self.cfg.rewards, "moving_stand_still_progress_fraction", 0.2),
+        )
+
     def _reward_moving_stand_still(self):
-        moving_command = torch.abs(self.commands[:, 0]) > self.cfg.rewards.moving_stand_still_command_threshold
-        standing_still = torch.abs(self.base_lin_vel[:, 0]) < self.cfg.rewards.moving_stand_still_velocity_threshold
-        return (moving_command & standing_still).float()
+        return self._moving_speed_deficit()
 
     def _reward_feet_contact_forces(self):
         # penalize high contact forces

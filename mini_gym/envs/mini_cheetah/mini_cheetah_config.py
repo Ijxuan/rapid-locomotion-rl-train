@@ -11,7 +11,7 @@ def config_mini_cheetah(Cnfg: Union[Cfg, Meta]):
 
     _ = Cnfg.init_state
 
-    _.pos = [0.0, 0.0, 0.32]  # x,y,z [m]
+    _.pos = [0.0, 0.0, 0.3]  # x,y,z [m]
     _.default_joint_angles = {  # = target angles [rad] when action = 0.0
         'FL_hip_joint': 0.1,  # [rad]
         'RL_hip_joint': 0.1,  # [rad]
@@ -31,8 +31,8 @@ def config_mini_cheetah(Cnfg: Union[Cfg, Meta]):
 
     _ = Cnfg.control
     _.control_type = 'P'
-    _.stiffness = {'joint': 17.}  # [N*m/rad]
-    _.damping = {'joint': 0.4}  # [N*m*s/rad]
+    _.stiffness = {'joint': 17., 'calf_joint': 34.}  # [N*m/rad]
+    _.damping = {'joint': 0.4, 'calf_joint': 0.8}  # [N*m*s/rad]
     # action scale: target angle = actionScale * action + defaultAngle
     _.action_scale = 0.1
     _.hip_scale_reduction = 1.0
@@ -41,11 +41,11 @@ def config_mini_cheetah(Cnfg: Union[Cfg, Meta]):
 
     _ = Cnfg.asset
     _.file = '{MINI_GYM_ROOT_DIR}/resources/robots/mini_cheetah/urdf/mini_cheetah.urdf'
-    _.foot_name = "calf"
-    _.penalize_contacts_on = []
+    _.foot_name = "foot"
+    _.penalize_contacts_on = ["calf"]
     _.terminate_after_contacts_on = ["base", "trunk"]
     _.collapse_fixed_joints = False
-    _.self_collisions = 0  # 1 to disable, 0 to enable...bitwise filter
+    _.self_collisions = 1  # 1 to disable, 0 to enable...bitwise filter
     _.flip_visual_attachments = False
     _.fix_base_link = False
 
@@ -55,6 +55,7 @@ def config_mini_cheetah(Cnfg: Union[Cfg, Meta]):
 
     _ = Cnfg.rewards.scales
     _.torques = -6e-4
+    _.collision = -1.0
     _.dof_pos_limits = 0.0
     _.orientation = -3.0
     _.base_height = 0.0

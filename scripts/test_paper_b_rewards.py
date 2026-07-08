@@ -3,9 +3,12 @@ import unittest
 import numpy as np
 
 from mini_gym.envs.base.paper_b_rewards import (
+    PAPER_B_DIRECT_REWARDS,
     PAPER_B_NEGATIVE_REWARDS,
     PAPER_B_POSITIVE_REWARDS,
     paper_b_airtime_piecewise,
+    paper_b_moving_speed_deficit,
+    paper_b_moving_speed_failure,
     paper_b_reward_gate,
     paper_b_total_reward,
 )
@@ -72,7 +75,32 @@ class PaperBRewardHelperTest(unittest.TestCase):
         )
         self.assertIn("action_smoothness_2", PAPER_B_NEGATIVE_REWARDS)
         self.assertIn("base_motion", PAPER_B_NEGATIVE_REWARDS)
-        self.assertIn("moving_stand_still", PAPER_B_NEGATIVE_REWARDS)
+        self.assertNotIn("moving_stand_still", PAPER_B_NEGATIVE_REWARDS)
+        self.assertEqual(PAPER_B_DIRECT_REWARDS, ("moving_stand_still",))
+
+    def test_moving_speed_deficit_is_continuous_and_direction_aware(self):
+        command_vx = np.array([1.0, 1.0, 1.0, -1.0, -1.0, 0.2], dtype=np.float32)
+        base_vx = np.array([-0.2, 0.1, 0.25, 0.2, -0.25, 0.0], dtype=np.float32)
+
+        deficit = paper_b_moving_speed_deficit(
+            command_vx,
+            base_vx,
+            command_threshold=0.3,
+            velocity_threshold=0.15,
+            progress_fraction=0.2,
+        )
+
+        np.testing.assert_allclose(deficit, np.array([2.0, 0.5, 0.0, 2.0, 0.0, 0.0]), atol=1e-6)
+        np.testing.assert_array_equal(
+            paper_b_moving_speed_failure(
+                command_vx,
+                base_vx,
+                command_threshold=0.3,
+                velocity_threshold=0.15,
+                progress_fraction=0.2,
+            ),
+            deficit > 0.0,
+        )
 
 
 if __name__ == "__main__":
